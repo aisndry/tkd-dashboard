@@ -76,16 +76,30 @@ def detect_columns(df):
 
 def load_data(file):
     try:
+        import io
+        content = file.read()
+        file.seek(0)
+
         if file.name.endswith('.csv'):
-            df = pd.read_csv(file)
+            df = pd.read_csv(io.BytesIO(content))
         else:
-            xf = pd.ExcelFile(file)
-            best = xf.sheet_names[0]
-            for s in xf.sheet_names:
-                if any(k in s.lower() for k in ['pagu','real','data','tkd']):
-                    best = s
+            # Try engines in order
+            for engine in ['openpyxl', 'xlrd', None]:
+                try:
+                    kwargs = {'engine': engine} if engine else {}
+                    xf = pd.ExcelFile(io.BytesIO(content), **kwargs)
+                    best = xf.sheet_names[0]
+                    for s in xf.sheet_names:
+                        if any(k in s.lower() for k in ['pagu','real','data','tkd']):
+                            best = s
+                            break
+                    df = pd.read_excel(io.BytesIO(content), sheet_name=best, **kwargs)
                     break
-            df = pd.read_excel(file, sheet_name=best)
+                except Exception:
+                    continue
+            else:
+                return None, "Tidak bisa membaca file Excel. Coba simpan ulang sebagai CSV."
+
         df.columns = df.columns.astype(str).str.strip()
         df = df.dropna(how='all')
         return df, None
