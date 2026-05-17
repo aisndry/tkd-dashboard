@@ -1,1474 +1,1224 @@
+"""
+Dashboard TKD - Transfer ke Daerah
+Kementerian Keuangan RI - DJPB
+Production-grade dashboard: Excel/CSV reader, PDF/Excel export, Proyeksi 1/3/5/10 tahun
+NO plotly dependency - uses matplotlib + altair + streamlit native
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib.patches import FancyBboxPatch
+import matplotlib.gridspec as gridspec
 import io
+import os
 import warnings
 from datetime import datetime
 
 warnings.filterwarnings("ignore")
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # PAGE CONFIG
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 st.set_page_config(
-    page_title="TKD Dashboard | Transfer ke Daerah",
+    page_title="Dashboard TKD · DJPB Kemenkeu",
     page_icon="🏛️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ─────────────────────────────────────────────
-# CUSTOM CSS — Modern Dark Government Dashboard
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+# GLOBAL CSS -- Modern Government Dark Theme
+# ---------------------------------------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
 
-/* ── Root Variables ── */
-:root {
-    --bg-primary: #0a0e1a;
-    --bg-card: #111827;
-    --bg-card-hover: #1a2236;
-    --accent-blue: #3b82f6;
-    --accent-cyan: #06b6d4;
-    --accent-emerald: #10b981;
-    --accent-amber: #f59e0b;
-    --accent-rose: #f43f5e;
-    --accent-violet: #8b5cf6;
-    --text-primary: #f1f5f9;
-    --text-secondary: #94a3b8;
-    --text-muted: #475569;
-    --border: #1e293b;
-    --border-bright: #334155;
-    --gradient-1: linear-gradient(135deg, #1e3a5f 0%, #0f2744 100%);
-    --gradient-2: linear-gradient(135deg, #064e3b 0%, #022c22 100%);
-    --gradient-3: linear-gradient(135deg, #451a03 0%, #292524 100%);
-    --gradient-4: linear-gradient(135deg, #2e1065 0%, #1e1b4b 100%);
-}
-
-/* ── Global Reset ── */
 html, body, [class*="css"] {
-    font-family: 'Plus Jakarta Sans', sans-serif;
-    background-color: var(--bg-primary) !important;
-    color: var(--text-primary) !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
 }
 
-/* ── Main App Background ── */
+/* -- Root palette -- */
+:root {
+    --bg-base:       #0a0e1a;
+    --bg-card:       #111827;
+    --bg-card2:      #1a2235;
+    --accent-gold:   #f5a623;
+    --accent-blue:   #3b82f6;
+    --accent-green:  #10b981;
+    --accent-red:    #ef4444;
+    --accent-purple: #8b5cf6;
+    --text-primary:  #f1f5f9;
+    --text-muted:    #94a3b8;
+    --border:        rgba(255,255,255,0.07);
+}
+
+/* -- App background -- */
 .stApp {
-    background: var(--bg-primary) !important;
-    background-image: 
-        radial-gradient(ellipse at 20% 0%, rgba(59,130,246,0.06) 0%, transparent 60%),
-        radial-gradient(ellipse at 80% 100%, rgba(16,185,129,0.04) 0%, transparent 60%);
-    min-height: 100vh;
+    background: var(--bg-base) !important;
+    background-image:
+        radial-gradient(ellipse at 20% 0%, rgba(59,130,246,0.08) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 100%, rgba(245,166,35,0.06) 0%, transparent 60%) !important;
 }
 
-/* ── Sidebar ── */
-section[data-testid="stSidebar"] {
-    background: #0d1117 !important;
+/* -- Sidebar -- */
+[data-testid="stSidebar"] {
+    background: #0d1220 !important;
     border-right: 1px solid var(--border) !important;
 }
-section[data-testid="stSidebar"] .stMarkdown,
-section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] p { color: var(--text-secondary) !important; }
-section[data-testid="stSidebar"] h1,
-section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3 { color: var(--text-primary) !important; }
-
-/* ── Hide Streamlit Branding ── */
-#MainMenu, footer, header { visibility: hidden; }
-.stDeployButton { display: none; }
-
-/* ── Header Banner ── */
-.header-banner {
-    background: linear-gradient(135deg, #0f1d3a 0%, #1a0f2e 50%, #0f1a2e 100%);
-    border: 1px solid var(--border-bright);
-    border-radius: 16px;
-    padding: 32px 40px;
-    margin-bottom: 28px;
-    position: relative;
-    overflow: hidden;
-}
-.header-banner::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: 
-        radial-gradient(ellipse at 10% 50%, rgba(59,130,246,0.12) 0%, transparent 50%),
-        radial-gradient(ellipse at 90% 50%, rgba(139,92,246,0.08) 0%, transparent 50%);
-    pointer-events: none;
-}
-.header-banner::after {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, #3b82f6, #8b5cf6, #06b6d4, transparent);
-}
-.header-title {
-    font-size: 2rem;
-    font-weight: 800;
-    color: #fff;
-    margin: 0;
-    letter-spacing: -0.03em;
-    line-height: 1.1;
-}
-.header-title span { color: #3b82f6; }
-.header-subtitle {
-    color: var(--text-secondary);
-    font-size: 0.875rem;
-    margin: 8px 0 0;
-    font-weight: 400;
-    letter-spacing: 0.02em;
-}
-.header-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(59,130,246,0.15);
-    border: 1px solid rgba(59,130,246,0.3);
-    color: #93c5fd;
-    padding: 4px 12px;
-    border-radius: 100px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    margin-top: 12px;
-    font-family: 'JetBrains Mono', monospace;
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stMultiSelect label {
+    color: var(--text-muted) !important;
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
 }
 
-/* ── KPI Cards ── */
+/* -- KPI cards -- */
 .kpi-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 22px 24px;
+    border-radius: 16px;
+    padding: 20px 24px;
     position: relative;
     overflow: hidden;
-    transition: all 0.2s ease;
-    height: 100%;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.4);
 }
 .kpi-card::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 3px;
-    border-radius: 14px 14px 0 0;
+    border-radius: 16px 16px 0 0;
 }
-.kpi-card.blue::before { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
-.kpi-card.emerald::before { background: linear-gradient(90deg, #10b981, #34d399); }
-.kpi-card.amber::before { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
-.kpi-card.rose::before { background: linear-gradient(90deg, #f43f5e, #fb7185); }
-.kpi-card.violet::before { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
-.kpi-card.cyan::before { background: linear-gradient(90deg, #06b6d4, #22d3ee); }
-
+.kpi-card.gold::before  { background: var(--accent-gold); }
+.kpi-card.blue::before  { background: var(--accent-blue); }
+.kpi-card.green::before { background: var(--accent-green); }
+.kpi-card.purple::before{ background: var(--accent-purple); }
 .kpi-label {
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
     color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
     margin-bottom: 8px;
 }
 .kpi-value {
-    font-size: 1.65rem;
-    font-weight: 800;
     color: var(--text-primary);
-    letter-spacing: -0.04em;
+    font-size: 1.9rem;
+    font-weight: 800;
     line-height: 1;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 .kpi-sub {
+    color: var(--text-muted);
     font-size: 0.75rem;
-    color: var(--text-secondary);
     font-weight: 500;
 }
-.kpi-icon {
-    position: absolute;
-    top: 20px; right: 20px;
-    font-size: 1.5rem;
-    opacity: 0.15;
+.kpi-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 99px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    margin-top: 8px;
 }
+.badge-up   { background: rgba(16,185,129,0.15); color: #10b981; }
+.badge-down { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.badge-flat { background: rgba(148,163,184,0.1); color: #94a3b8; }
 
-/* ── Section Headers ── */
+/* -- Section headers -- */
 .section-header {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     margin: 32px 0 16px;
     padding-bottom: 12px;
     border-bottom: 1px solid var(--border);
 }
-.section-header h2 {
+.section-icon {
+    width: 36px; height: 36px;
+    background: rgba(59,130,246,0.15);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem;
+}
+.section-title {
+    color: var(--text-primary);
     font-size: 1.05rem;
     font-weight: 700;
-    color: var(--text-primary);
     margin: 0;
-    letter-spacing: -0.01em;
-}
-.section-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--accent-blue);
-    box-shadow: 0 0 8px rgba(59,130,246,0.6);
 }
 
-/* ── Insight Card ── */
-.insight-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent-blue);
-    border-radius: 10px;
-    padding: 16px 20px;
-    margin-bottom: 10px;
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
-}
-.insight-card.warning { border-left-color: var(--accent-amber); }
-.insight-card.success { border-left-color: var(--accent-emerald); }
-.insight-card.danger  { border-left-color: var(--accent-rose); }
-.insight-card strong  { color: var(--text-primary); }
-
-/* ── Download Buttons ── */
-.dl-btn-container {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin: 16px 0;
+/* -- Tables -- */
+.stDataFrame { border-radius: 12px !important; overflow: hidden !important; }
+[data-testid="stDataFrame"] thead th {
+    background: var(--bg-card2) !important;
+    color: var(--text-muted) !important;
+    font-size: 0.72rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
 }
 
-/* ── Table ── */
-.stDataFrame, .stTable { 
+/* -- Buttons -- */
+.stDownloadButton > button {
+    background: linear-gradient(135deg, #1d4ed8, #2563eb) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.82rem !important;
+    padding: 10px 20px !important;
+    transition: all 0.2s !important;
+}
+.stDownloadButton > button:hover {
+    background: linear-gradient(135deg, #1e40af, #1d4ed8) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 6px 20px rgba(37,99,235,0.35) !important;
+}
+
+/* -- File uploader -- */
+[data-testid="stFileUploader"] {
     background: var(--bg-card) !important;
-    border-radius: 10px;
+    border: 2px dashed rgba(59,130,246,0.3) !important;
+    border-radius: 16px !important;
+    padding: 24px !important;
 }
 
-/* ── Plotly Charts override for dark ── */
-.js-plotly-plot .plotly { background: transparent !important; }
-
-/* ── Selectbox/Inputs ── */
-.stSelectbox > div > div,
-.stMultiSelect > div > div { 
+/* -- Metrics -- */
+[data-testid="metric-container"] {
     background: var(--bg-card) !important;
-    border: 1px solid var(--border-bright) !important;
-    color: var(--text-primary) !important;
-    border-radius: 8px !important;
-}
-
-/* ── Upload Area ── */
-.stFileUploader > div {
-    background: var(--bg-card) !important;
-    border: 2px dashed var(--border-bright) !important;
+    border: 1px solid var(--border) !important;
     border-radius: 12px !important;
+    padding: 16px !important;
+}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color: var(--text-primary) !important;
+}
+[data-testid="metric-container"] [data-testid="stMetricLabel"] {
+    color: var(--text-muted) !important;
 }
 
-/* ── Tabs ── */
+/* -- Tabs -- */
 .stTabs [data-baseweb="tab-list"] {
     background: var(--bg-card) !important;
-    border-radius: 10px !important;
+    border-radius: 12px !important;
     padding: 4px !important;
     gap: 4px !important;
-    border: 1px solid var(--border) !important;
 }
 .stTabs [data-baseweb="tab"] {
-    background: transparent !important;
     color: var(--text-muted) !important;
     border-radius: 8px !important;
     font-weight: 600 !important;
     font-size: 0.82rem !important;
-    padding: 8px 16px !important;
 }
 .stTabs [aria-selected="true"] {
     background: var(--accent-blue) !important;
     color: white !important;
 }
 
-/* ── Metrics override ── */
-[data-testid="metric-container"] {
+/* -- Selectbox / inputs -- */
+.stSelectbox > div > div,
+.stMultiSelect > div > div {
     background: var(--bg-card) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 10px !important;
-    padding: 16px !important;
-}
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg-primary); }
-::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
-
-/* ── Alert / Info ── */
-.stAlert { border-radius: 10px !important; }
-
-/* ── Progress bar ── */
-.stProgress > div > div { background: var(--accent-blue) !important; }
-
-/* ── Spinner ── */
-.stSpinner > div { border-top-color: var(--accent-blue) !important; }
-
-/* ── Number Input ── */
-.stNumberInput > div > div > input {
-    background: var(--bg-card) !important;
-    border: 1px solid var(--border-bright) !important;
+    border-color: var(--border) !important;
     color: var(--text-primary) !important;
-    border-radius: 8px !important;
 }
 
-/* ── Projection badge ── */
-.proj-badge {
+/* -- Alert boxes -- */
+.info-box {
+    background: rgba(59,130,246,0.08);
+    border-left: 4px solid var(--accent-blue);
+    border-radius: 0 12px 12px 0;
+    padding: 14px 18px;
+    margin: 12px 0;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+.warn-box {
+    background: rgba(245,166,35,0.08);
+    border-left: 4px solid var(--accent-gold);
+    border-radius: 0 12px 12px 0;
+    padding: 14px 18px;
+    margin: 12px 0;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+/* -- Hero header -- */
+.hero-header {
+    background: linear-gradient(135deg, #111827 0%, #1a2235 100%);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 28px 36px;
+    margin-bottom: 28px;
+    position: relative;
+    overflow: hidden;
+}
+.hero-header::after {
+    content: '';
+    position: absolute;
+    top: -60px; right: -60px;
+    width: 240px; height: 240px;
+    background: radial-gradient(circle, rgba(245,166,35,0.1) 0%, transparent 70%);
+    border-radius: 50%;
+}
+.hero-title {
+    color: var(--text-primary);
+    font-size: 1.7rem;
+    font-weight: 800;
+    margin: 0 0 4px;
+    line-height: 1.2;
+}
+.hero-subtitle {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 400;
+    margin: 0;
+}
+.hero-badge {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    background: rgba(139,92,246,0.12);
-    border: 1px solid rgba(139,92,246,0.25);
-    color: #c4b5fd;
-    padding: 3px 10px;
-    border-radius: 100px;
-    font-size: 0.7rem;
+    gap: 6px;
+    background: rgba(245,166,35,0.12);
+    border: 1px solid rgba(245,166,35,0.25);
+    color: var(--accent-gold);
+    border-radius: 99px;
+    padding: 4px 14px;
+    font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-}
-
-/* ── Footer ── */
-.dashboard-footer {
-    text-align: center;
-    padding: 24px;
-    color: var(--text-muted);
-    font-size: 0.72rem;
-    border-top: 1px solid var(--border);
-    margin-top: 48px;
-    letter-spacing: 0.05em;
+    margin-bottom: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
 
+# ---------------------------------------------
+# MATPLOTLIB STYLE -- matches dark theme
+# ---------------------------------------------
+plt.style.use("dark_background")
+MCOLOR = {
+    "bg":     "#111827",
+    "bg2":    "#1a2235",
+    "gold":   "#f5a623",
+    "blue":   "#3b82f6",
+    "green":  "#10b981",
+    "red":    "#ef4444",
+    "purple": "#8b5cf6",
+    "text":   "#f1f5f9",
+    "muted":  "#94a3b8",
+    "grid":   "#1e293b",
+}
 
-# ─────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────
+def mpl_fig(w=10, h=4.5):
+    fig, ax = plt.subplots(figsize=(w, h), facecolor=MCOLOR["bg"])
+    ax.set_facecolor(MCOLOR["bg"])
+    ax.tick_params(colors=MCOLOR["muted"], labelsize=8)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(MCOLOR["grid"])
+    ax.grid(axis="y", color=MCOLOR["grid"], linewidth=0.8, alpha=0.6)
+    ax.grid(axis="x", visible=False)
+    return fig, ax
 
-def fmt_triliun(val):
-    """Format big numbers into Miliar/Triliun"""
-    if pd.isna(val): return "—"
-    val = float(val)
-    if abs(val) >= 1e12:   return f"Rp {val/1e12:.2f} T"
-    if abs(val) >= 1e9:    return f"Rp {val/1e9:.2f} M"
-    if abs(val) >= 1e6:    return f"Rp {val/1e6:.1f} Jt"
-    return f"Rp {val:,.0f}"
+def fmt_rp(v):
+    """Format angka ke Rupiah singkat (T / M / B)"""
+    if pd.isna(v):
+        return "-"
+    v = float(v)
+    if abs(v) >= 1e12:
+        return f"Rp {v/1e12:.2f} T"
+    if abs(v) >= 1e9:
+        return f"Rp {v/1e9:.1f} M"
+    if abs(v) >= 1e6:
+        return f"Rp {v/1e6:.1f} jt"
+    return f"Rp {v:,.0f}"
 
-def fmt_pct(val):
-    if pd.isna(val): return "—"
-    return f"{float(val):.1f}%"
+def fmt_pct(v):
+    if pd.isna(v):
+        return "-"
+    return f"{float(v):.1f}%"
 
-def pct_color(val):
-    if val >= 80:   return "emerald"
-    if val >= 50:   return "amber"
-    return "rose"
-
+# ---------------------------------------------
+# DATA LOADING -- rock-solid Excel/CSV reader
+# ---------------------------------------------
+@st.cache_data(show_spinner=False)
 def load_file(uploaded_file):
-    """
-    Robust file loader for .xlsx, .xls, .csv
-    Returns (DataFrame, error_str)
-    """
     name = uploaded_file.name.lower()
-    raw = uploaded_file.read()
-    buf = io.BytesIO(raw)
+    errors = []
 
     if name.endswith(".csv"):
-        # Try multiple encodings + separators
-        for enc in ["utf-8", "latin-1", "cp1252", "utf-8-sig"]:
-            for sep in [",", ";", "\t", "|"]:
-                try:
-                    buf.seek(0)
-                    df = pd.read_csv(buf, encoding=enc, sep=sep, low_memory=False)
-                    if df.shape[1] > 1:
-                        return df, None
-                except Exception:
-                    continue
-        return None, "Tidak dapat membaca file CSV. Cek encoding/separator."
+        raw = uploaded_file.read()
+        for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252", "iso-8859-1"]:
+            try:
+                text = raw.decode(enc)
+                for sep in [",", ";", "\t", "|"]:
+                    try:
+                        df = pd.read_csv(io.StringIO(text), sep=sep)
+                        if len(df.columns) > 1:
+                            return df, None
+                    except Exception:
+                        pass
+            except Exception as e:
+                errors.append(str(e))
+        return None, f"CSV tidak bisa dibaca. Coba simpan ulang sebagai UTF-8. Detail: {'; '.join(errors)}"
 
     elif name.endswith(".xlsx") or name.endswith(".xlsm"):
+        data = uploaded_file.read()
         try:
-            buf.seek(0)
-            df = pd.read_excel(buf, engine="openpyxl", sheet_name=0)
+            xf = pd.ExcelFile(io.BytesIO(data), engine="openpyxl")
+            sheets = xf.sheet_names
+            if len(sheets) > 1:
+                sheet = st.sidebar.selectbox("Sheet Excel", sheets)
+            else:
+                sheet = sheets[0]
+            df = pd.read_excel(io.BytesIO(data), sheet_name=sheet, engine="openpyxl")
             return df, None
-        except ImportError:
-            return None, "openpyxl belum terinstall. Tambahkan ke requirements.txt."
         except Exception as e:
-            return None, f"Error baca .xlsx: {e}"
+            errors.append(f"openpyxl: {e}")
 
     elif name.endswith(".xls"):
+        data = uploaded_file.read()
         try:
-            buf.seek(0)
-            df = pd.read_excel(buf, engine="xlrd", sheet_name=0)
+            df = pd.read_excel(io.BytesIO(data), engine="xlrd")
             return df, None
-        except ImportError:
-            return None, "xlrd belum terinstall."
         except Exception as e:
-            return None, f"Error baca .xls: {e}"
+            errors.append(f"xlrd: {e}")
 
     else:
-        return None, f"Format file '{name}' tidak didukung. Gunakan .xlsx / .xls / .csv"
+        return None, f"Format '{name}' tidak didukung. Upload .xlsx, .xls, atau .csv"
+
+    return None, f"File tidak bisa dibaca: {'; '.join(errors)}"
 
 
-def detect_columns(df):
-    """
-    Auto-detect column roles from any TKD-like dataframe.
-    Returns dict with keys: region, pagu, realisasi, month, year, account
-    """
-    cols = {c: c.lower().replace(" ", "_") for c in df.columns}
-    mapping = {}
+def detect_columns(df: pd.DataFrame) -> dict:
+    """Auto-detect kolom pagu, realisasi, wilayah, tahun dari nama kolom."""
+    cols = {c.lower(): c for c in df.columns}
+    result = {}
 
-    region_kw   = ["wilayah","kabupaten","kota","kab","provinsi","daerah","satker","satuan_kerja","uraian_satker"]
-    pagu_kw     = ["pagu","anggaran","dipa","target","rencana"]
-    real_kw     = ["realisasi","realization","actual","terealisasi","pencairan","penyaluran"]
-    month_kw    = ["bulan","month","periode","bln"]
-    year_kw     = ["tahun","year","ta"]
-    account_kw  = ["akun","account","jenis","program","kegiatan","output","komponen"]
+    # Pagu
+    for k in ["pagu", "anggaran", "alokasi", "budget", "target", "pagu_anggaran"]:
+        if k in cols:
+            result["pagu"] = cols[k]; break
+    # Realisasi
+    for k in ["realisasi", "realization", "actual", "pencairan", "penyerapan"]:
+        if k in cols:
+            result["real"] = cols[k]; break
+    # Wilayah / daerah
+    for k in ["wilayah", "daerah", "provinsi", "kab", "kota", "kabupaten", "region", "satker", "kode_wilayah"]:
+        if k in cols:
+            result["wilayah"] = cols[k]; break
+    # Tahun
+    for k in ["tahun", "year", "ta", "tp"]:
+        if k in cols:
+            result["tahun"] = cols[k]; break
 
-    for orig, low in cols.items():
-        for kw in region_kw:
-            if kw in low and "region" not in mapping:
-                mapping["region"] = orig
-        for kw in pagu_kw:
-            if kw in low and "pagu" not in mapping:
-                mapping["pagu"] = orig
-        for kw in real_kw:
-            if kw in low and "realisasi" not in mapping:
-                mapping["realisasi"] = orig
-        for kw in month_kw:
-            if kw in low and "bulan" not in mapping:
-                mapping["bulan"] = orig
-        for kw in year_kw:
-            if kw in low and "tahun" not in mapping:
-                mapping["tahun"] = orig
-        for kw in account_kw:
-            if kw in low and "akun" not in mapping:
-                mapping["akun"] = orig
-
-    return mapping
-
-
-def coerce_numeric(df, cols):
-    for c in cols:
-        if c and c in df.columns:
-            df[c] = pd.to_numeric(
-                df[c].astype(str).str.replace(r"[Rp\s\.,]", "", regex=True)
-                     .str.replace(",", "").str.replace(" ", ""),
-                errors="coerce"
-            )
-    return df
-
-
-def linear_projection(values, n_years):
-    """Return projected values for n_years beyond the data using linear regression"""
-    x = np.arange(len(values))
-    if len(x) < 2:
-        return [values[-1]] * n_years
-    m, b = np.polyfit(x, values, 1)
-    future_x = np.arange(len(values), len(values) + n_years)
-    return m * future_x + b
-
-
-def growth_projection(values, n_years):
-    """CAGR-based compound growth projection"""
-    if len(values) < 2 or values[0] <= 0:
-        return [values[-1]] * n_years
-    cagr = (values[-1] / values[0]) ** (1 / (len(values) - 1)) - 1
-    result = []
-    for i in range(1, n_years + 1):
-        result.append(values[-1] * ((1 + cagr) ** i))
     return result
 
 
-def to_excel_bytes(df):
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Data")
-    return buf.getvalue()
+def clean_numeric(series: pd.Series) -> pd.Series:
+    """Clean kolom numerik: hapus Rp, koma, titik ribuan, dll."""
+    if pd.api.types.is_numeric_dtype(series):
+        return series
+    s = series.astype(str)
+    s = s.str.replace(r"[Rp\s]", "", regex=True)
+    s = s.str.replace(r"[^\d.,-]", "", regex=True)
+    # Handle format 1.000.000,00 (ID) vs 1,000,000.00 (US)
+    if s.str.contains(",").any() and s.str.contains(r"\.", regex=True).any():
+        # If last separator is comma → ID format
+        has_comma_last = s.str.match(r"^[\d.]+,\d{1,2}$")
+        if has_comma_last.mean() > 0.3:
+            s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+        else:
+            s = s.str.replace(",", "", regex=False)
+    elif s.str.contains(",").any():
+        s = s.str.replace(",", ".", regex=False)
+    return pd.to_numeric(s, errors="coerce")
 
 
-def to_pdf_bytes(summary_dict, region_df=None, title="TKD Dashboard Report"):
-    """Generate a clean PDF report using reportlab"""
+# ---------------------------------------------
+# FORECASTING ENGINE
+# ---------------------------------------------
+def forecast_series(values: np.ndarray, years_out: list) -> dict:
+    """
+    Ensemble forecast: Linear regression + CAGR weighted average.
+    Returns dict {year_out: {"min","mid","max"}} as absolute values.
+    """
+    v = np.array([x for x in values if not np.isnan(x)], dtype=float)
+    n = len(v)
+    if n < 2:
+        last = v[-1] if n == 1 else np.nan
+        return {y: {"min": last, "mid": last, "max": last} for y in years_out}
+
+    # 1) Linear regression
+    x = np.arange(n)
+    A = np.vstack([x, np.ones(n)]).T
+    slope, intercept = np.linalg.lstsq(A, v, rcond=None)[0]
+
+    # 2) CAGR (first to last)
+    cagr = (v[-1] / v[0]) ** (1 / (n - 1)) - 1 if v[0] > 0 else 0.0
+
+    results = {}
+    for y in years_out:
+        lin = intercept + slope * (n - 1 + y)
+        cagr_val = v[-1] * ((1 + cagr) ** y)
+
+        # Ensemble: weight linear 60%, cagr 40%
+        mid = 0.60 * lin + 0.40 * cagr_val
+        # Uncertainty ±15% expanding with horizon
+        ci = 0.10 + 0.02 * y
+        results[y] = {
+            "min": mid * (1 - ci),
+            "mid": mid,
+            "max": mid * (1 + ci),
+        }
+    return results
+
+
+def calc_cagr(values: np.ndarray) -> float:
+    v = np.array([x for x in values if x and not np.isnan(x)], dtype=float)
+    if len(v) < 2 or v[0] <= 0:
+        return np.nan
+    return ((v[-1] / v[0]) ** (1 / (len(v) - 1)) - 1) * 100
+
+
+# ---------------------------------------------
+# PDF EXPORT (reportlab)
+# ---------------------------------------------
+def generate_pdf(df: pd.DataFrame, kpi: dict, cols: dict, filters: dict) -> bytes:
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib import colors
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import cm
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=A4,
                                 leftMargin=2*cm, rightMargin=2*cm,
                                 topMargin=2*cm, bottomMargin=2*cm)
+
         styles = getSampleStyleSheet()
+        NAVY  = colors.HexColor("#0d1220")
+        GOLD  = colors.HexColor("#f5a623")
+        BLUE  = colors.HexColor("#3b82f6")
+        LGRAY = colors.HexColor("#f1f5f9")
+        MGRAY = colors.HexColor("#94a3b8")
+        WHITE = colors.white
+
+        title_style = ParagraphStyle("title", parent=styles["Normal"],
+            fontSize=18, textColor=WHITE, fontName="Helvetica-Bold",
+            alignment=TA_CENTER, spaceAfter=4)
+        sub_style = ParagraphStyle("sub", parent=styles["Normal"],
+            fontSize=9, textColor=MGRAY, fontName="Helvetica",
+            alignment=TA_CENTER, spaceAfter=2)
+        h2_style = ParagraphStyle("h2", parent=styles["Normal"],
+            fontSize=12, textColor=BLUE, fontName="Helvetica-Bold",
+            spaceBefore=14, spaceAfter=6)
+        body_style = ParagraphStyle("body", parent=styles["Normal"],
+            fontSize=8, textColor=colors.HexColor("#1e293b"),
+            fontName="Helvetica", spaceAfter=4)
+
         story = []
 
-        # Title
-        title_style = ParagraphStyle("title", fontSize=20, fontName="Helvetica-Bold",
-                                     textColor=colors.HexColor("#1e3a5f"),
-                                     spaceAfter=4, alignment=TA_CENTER)
-        sub_style   = ParagraphStyle("sub", fontSize=10, fontName="Helvetica",
-                                     textColor=colors.HexColor("#64748b"),
-                                     spaceAfter=16, alignment=TA_CENTER)
-        h2_style    = ParagraphStyle("h2", fontSize=13, fontName="Helvetica-Bold",
-                                     textColor=colors.HexColor("#1e293b"),
-                                     spaceBefore=16, spaceAfter=8)
-        body_style  = ParagraphStyle("body", fontSize=9, fontName="Helvetica",
-                                     textColor=colors.HexColor("#374151"),
-                                     leading=14, spaceAfter=4)
+        # -- Title block --
+        story.append(Spacer(1, 0.2*cm))
+        story.append(Paragraph("LAPORAN DASHBOARD TKD", title_style))
+        story.append(Paragraph("Transfer ke Daerah -- DJPB Kemenkeu RI", sub_style))
+        story.append(Paragraph(f"Dicetak: {datetime.now().strftime('%d %B %Y, %H:%M')}", sub_style))
+        story.append(HRFlowable(width="100%", thickness=2, color=GOLD, spaceAfter=12))
 
-        story.append(Paragraph(title, title_style))
-        story.append(Paragraph(f"Generated: {datetime.now().strftime('%d %B %Y, %H:%M WIB')}", sub_style))
-        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#3b82f6"), spaceAfter=16))
+        # -- Filter info --
+        if any(filters.values()):
+            ftext = "  |  ".join([f"{k}: {v}" for k, v in filters.items() if v])
+            story.append(Paragraph(f"<b>Filter Aktif:</b> {ftext}", body_style))
+            story.append(Spacer(1, 0.2*cm))
 
-        # KPI Summary
-        story.append(Paragraph("📊 Ringkasan Eksekutif", h2_style))
-        kpi_data = [["Indikator", "Nilai"]]
-        for k, v in summary_dict.items():
-            kpi_data.append([k, str(v)])
-
-        tbl = Table(kpi_data, colWidths=[10*cm, 7*cm])
-        tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1e3a5f")),
-            ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
-            ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
-            ("FONTSIZE",   (0,0), (-1,0), 10),
-            ("ALIGN",      (0,0), (-1,-1), "LEFT"),
-            ("FONTNAME",   (0,1), (-1,-1), "Helvetica"),
-            ("FONTSIZE",   (0,1), (-1,-1), 9),
-            ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.HexColor("#f8fafc"), colors.white]),
-            ("GRID",       (0,0), (-1,-1), 0.5, colors.HexColor("#e2e8f0")),
-            ("PADDING",    (0,0), (-1,-1), 8),
-            ("TOPPADDING", (0,0), (-1,-1), 10),
-            ("BOTTOMPADDING", (0,0), (-1,-1), 10),
+        # -- KPI table --
+        story.append(Paragraph("Ringkasan KPI", h2_style))
+        kpi_data = [
+            ["Indikator", "Nilai"],
+            ["Total Pagu",       fmt_rp(kpi.get("total_pagu", 0))],
+            ["Total Realisasi",  fmt_rp(kpi.get("total_real", 0))],
+            ["% Penyerapan",     fmt_pct(kpi.get("pct_real", 0))],
+            ["Jumlah Wilayah",   str(kpi.get("n_wilayah", "-"))],
+            ["Jumlah Record",    f"{kpi.get('n_rows', 0):,}"],
+        ]
+        kpi_tbl = Table(kpi_data, colWidths=[9*cm, 7*cm])
+        kpi_tbl.setStyle(TableStyle([
+            ("BACKGROUND",   (0,0), (-1,0), BLUE),
+            ("TEXTCOLOR",    (0,0), (-1,0), WHITE),
+            ("FONTNAME",     (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",     (0,0), (-1,-1), 9),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [LGRAY, WHITE]),
+            ("GRID",         (0,0), (-1,-1), 0.3, colors.HexColor("#cbd5e1")),
+            ("PADDING",      (0,0), (-1,-1), 6),
         ]))
-        story.append(tbl)
-        story.append(Spacer(1, 16))
+        story.append(kpi_tbl)
+        story.append(Spacer(1, 0.4*cm))
 
-        # Region Table
-        if region_df is not None and not region_df.empty:
-            story.append(Paragraph("📍 Detail per Wilayah", h2_style))
-            tbl_data = [list(region_df.columns)]
-            for _, row in region_df.iterrows():
-                tbl_data.append([str(v) for v in row.values])
+        # -- Data table (max 100 rows) --
+        story.append(Paragraph("Data Detail (maks. 100 baris)", h2_style))
+        show_df = df.head(100)
+        tbl_data = [list(show_df.columns)]
+        for _, row in show_df.iterrows():
+            tbl_data.append([str(v)[:30] if pd.notna(v) else "" for v in row])
 
-            n_cols = len(region_df.columns)
-            col_w  = 17*cm / n_cols
-            t2 = Table(tbl_data, colWidths=[col_w]*n_cols)
-            t2.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0f2744")),
-                ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
-                ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
-                ("FONTSIZE",   (0,0), (-1,-1), 8),
-                ("ALIGN",      (0,0), (-1,-1), "CENTER"),
-                ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.HexColor("#f0f4f8"), colors.white]),
-                ("GRID",       (0,0), (-1,-1), 0.3, colors.HexColor("#cbd5e1")),
-                ("PADDING",    (0,0), (-1,-1), 6),
-            ]))
-            story.append(t2)
+        col_w = 17 / len(show_df.columns)
+        data_tbl = Table(tbl_data, colWidths=[col_w*cm]*len(show_df.columns), repeatRows=1)
+        data_tbl.setStyle(TableStyle([
+            ("BACKGROUND",   (0,0), (-1,0), NAVY),
+            ("TEXTCOLOR",    (0,0), (-1,0), WHITE),
+            ("FONTNAME",     (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",     (0,0), (-1,-1), 7),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [LGRAY, WHITE]),
+            ("GRID",         (0,0), (-1,-1), 0.2, colors.HexColor("#e2e8f0")),
+            ("PADDING",      (0,0), (-1,-1), 4),
+            ("ALIGN",        (0,0), (-1,-1), "LEFT"),
+            ("VALIGN",       (0,0), (-1,-1), "MIDDLE"),
+        ]))
+        story.append(data_tbl)
 
-        story.append(Spacer(1, 24))
-        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cbd5e1")))
-        story.append(Spacer(1, 8))
+        # -- Footer --
+        story.append(Spacer(1, 0.5*cm))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=MGRAY))
         story.append(Paragraph(
-            "Dokumen ini dihasilkan secara otomatis oleh TKD Dashboard · Direktorat Jenderal Perimbangan Keuangan",
-            ParagraphStyle("footer", fontSize=7, textColor=colors.HexColor("#94a3b8"), alignment=TA_CENTER)
+            "Dashboard TKD · DJPB Kementerian Keuangan RI · Rahasia / Internal",
+            ParagraphStyle("footer", parent=styles["Normal"],
+                fontSize=7, textColor=MGRAY, fontName="Helvetica",
+                alignment=TA_CENTER)
         ))
 
         doc.build(story)
         return buf.getvalue()
-    except Exception as e:
-        return None, str(e)
+    except ImportError:
+        return None
 
 
-PLOTLY_LAYOUT = dict(
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="Plus Jakarta Sans", color="#94a3b8", size=12),
-    margin=dict(l=10, r=10, t=40, b=10),
-    legend=dict(
-        bgcolor="rgba(17,24,39,0.8)",
-        bordercolor="#334155",
-        borderwidth=1,
-        font=dict(size=11)
-    ),
-    xaxis=dict(gridcolor="#1e293b", zerolinecolor="#1e293b", tickfont=dict(size=11)),
-    yaxis=dict(gridcolor="#1e293b", zerolinecolor="#1e293b", tickfont=dict(size=11)),
-)
+def generate_excel(df: pd.DataFrame, kpi: dict, forecast_df=None) -> bytes:
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Data", index=False)
 
-COLOR_SEQ = ["#3b82f6","#10b981","#f59e0b","#8b5cf6","#f43f5e","#06b6d4",
-             "#84cc16","#ec4899","#14b8a6","#fb923c","#a78bfa","#34d399"]
+        # KPI sheet
+        kpi_df = pd.DataFrame([
+            {"Indikator": "Total Pagu",       "Nilai": kpi.get("total_pagu", 0)},
+            {"Indikator": "Total Realisasi",  "Nilai": kpi.get("total_real", 0)},
+            {"Indikator": "% Penyerapan",     "Nilai": kpi.get("pct_real", 0)},
+            {"Indikator": "Jumlah Wilayah",   "Nilai": kpi.get("n_wilayah", "-")},
+            {"Indikator": "Jumlah Record",    "Nilai": kpi.get("n_rows", 0)},
+        ])
+        kpi_df.to_excel(writer, sheet_name="Ringkasan KPI", index=False)
+
+        if forecast_df is not None and not forecast_df.empty:
+            forecast_df.to_excel(writer, sheet_name="Proyeksi", index=False)
+
+    return buf.getvalue()
 
 
-# ─────────────────────────────────────────────
-# SIDEBAR
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+# CHART FUNCTIONS
+# ---------------------------------------------
+def chart_bar_pagu_real(df_agg, col_pagu, col_real, col_wilayah, top_n=15):
+    """Bar chart grouped: Pagu vs Realisasi per wilayah."""
+    data = df_agg.nlargest(top_n, col_pagu)
+    labels = data[col_wilayah].astype(str).str[:18].tolist()
+    pagu   = data[col_pagu].tolist()
+    real   = data[col_real].tolist() if col_real else [0] * len(pagu)
 
-with st.sidebar:
+    fig, ax = mpl_fig(10, 4.5)
+    x = np.arange(len(labels))
+    w = 0.38
+    b1 = ax.bar(x - w/2, pagu, w, label="Pagu", color=MCOLOR["blue"], alpha=0.9, zorder=3)
+    b2 = ax.bar(x + w/2, real, w, label="Realisasi", color=MCOLOR["green"], alpha=0.9, zorder=3)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=35, ha="right", fontsize=7.5, color=MCOLOR["muted"])
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda v, _: f"{v/1e12:.1f}T" if v >= 1e12 else (f"{v/1e9:.0f}M" if v >= 1e9 else f"{v/1e6:.0f}jt")
+    ))
+    ax.legend(framealpha=0, labelcolor=MCOLOR["muted"], fontsize=8)
+    ax.set_title("Pagu vs Realisasi per Wilayah", color=MCOLOR["text"], fontsize=10, fontweight="bold", pad=10)
+    fig.tight_layout()
+    return fig
+
+
+def chart_trend(years, pagu_vals, real_vals):
+    """Line chart trend tahun."""
+    fig, ax = mpl_fig(10, 4)
+    ax.plot(years, pagu_vals, "o-", color=MCOLOR["blue"],  linewidth=2.5, markersize=7, label="Pagu")
+    ax.plot(years, real_vals, "s-", color=MCOLOR["green"], linewidth=2.5, markersize=7, label="Realisasi")
+    ax.fill_between(years, pagu_vals, real_vals, alpha=0.06, color=MCOLOR["gold"])
+    ax.set_xticks(years)
+    ax.set_xticklabels([str(int(y)) for y in years], color=MCOLOR["muted"], fontsize=8.5)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda v, _: f"{v/1e12:.1f}T" if v >= 1e12 else f"{v/1e9:.0f}M"
+    ))
+    ax.legend(framealpha=0, labelcolor=MCOLOR["muted"], fontsize=8)
+    ax.set_title("Tren Pagu & Realisasi per Tahun", color=MCOLOR["text"], fontsize=10, fontweight="bold", pad=10)
+    fig.tight_layout()
+    return fig
+
+
+def chart_pct_bar(df_agg, col_real, col_pagu, col_wilayah, top_n=20):
+    """Horizontal bar: % penyerapan per wilayah."""
+    data = df_agg.copy()
+    data["pct"] = (data[col_real] / data[col_pagu] * 100).clip(0, 200)
+    data = data.dropna(subset=["pct"]).nlargest(top_n, "pct")
+
+    fig, ax = plt.subplots(figsize=(9, max(3.5, len(data)*0.38)), facecolor=MCOLOR["bg"])
+    ax.set_facecolor(MCOLOR["bg"])
+
+    colors_bar = [MCOLOR["green"] if p >= 90 else (MCOLOR["gold"] if p >= 70 else MCOLOR["red"])
+                  for p in data["pct"]]
+    bars = ax.barh(data[col_wilayah].astype(str).str[:22], data["pct"],
+                   color=colors_bar, alpha=0.9, height=0.65, zorder=3)
+    ax.axvline(100, color=MCOLOR["muted"], linewidth=1, linestyle="--", alpha=0.5)
+    ax.set_xlabel("% Penyerapan", color=MCOLOR["muted"], fontsize=8)
+    ax.tick_params(colors=MCOLOR["muted"], labelsize=7.5)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(MCOLOR["grid"])
+    ax.grid(axis="x", color=MCOLOR["grid"], linewidth=0.7, alpha=0.5)
+    ax.set_title("% Penyerapan per Wilayah", color=MCOLOR["text"], fontsize=10, fontweight="bold", pad=10)
+    fig.tight_layout()
+    return fig
+
+
+def chart_forecast(years_hist, vals_hist, fore_dict, label="Pagu", color=MCOLOR["blue"]):
+    """Forecast chart dengan confidence band."""
+    fig, ax = mpl_fig(10, 4.5)
+
+    ax.plot(years_hist, vals_hist, "o-", color=color, linewidth=2.5, markersize=7,
+            label=f"Historis {label}", zorder=4)
+
+    last_year = int(years_hist[-1]) if len(years_hist) else datetime.now().year
+    fore_years = [last_year + y for y in sorted(fore_dict.keys())]
+    fore_mid   = [fore_dict[y]["mid"] for y in sorted(fore_dict.keys())]
+    fore_min   = [fore_dict[y]["min"] for y in sorted(fore_dict.keys())]
+    fore_max   = [fore_dict[y]["max"] for y in sorted(fore_dict.keys())]
+
+    # Bridge from last historical point
+    bridge_x = [years_hist[-1]] + fore_years
+    bridge_y = [vals_hist[-1]] + fore_mid
+    ax.plot(bridge_x, bridge_y, "--o", color=MCOLOR["gold"], linewidth=2, markersize=6,
+            label=f"Proyeksi {label}", zorder=4)
+    ax.fill_between(fore_years, fore_min, fore_max, alpha=0.15, color=MCOLOR["gold"],
+                    label="Confidence Band (±CI)")
+
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda v, _: f"{v/1e12:.1f}T" if abs(v) >= 1e12 else f"{v/1e9:.0f}M"
+    ))
+    ax.legend(framealpha=0, labelcolor=MCOLOR["muted"], fontsize=8)
+    ax.set_title(f"Proyeksi {label}", color=MCOLOR["text"], fontsize=10, fontweight="bold", pad=10)
+    ax.axvline(years_hist[-1], color=MCOLOR["muted"], linewidth=0.8, linestyle=":", alpha=0.6)
+    fig.tight_layout()
+    return fig
+
+
+def chart_scatter(df_agg, col_pagu, col_real, col_wilayah):
+    """Scatter: Pagu vs Realisasi dengan diagonal reference."""
+    fig, ax = mpl_fig(8, 5)
+    x = df_agg[col_pagu].values
+    y = df_agg[col_real].values
+    labels = df_agg[col_wilayah].astype(str).values
+
+    scatter = ax.scatter(x, y, c=MCOLOR["blue"], s=70, alpha=0.8, edgecolors=MCOLOR["bg2"], linewidth=0.8, zorder=4)
+
+    # Diagonal
+    lim_max = max(x.max(), y.max()) * 1.05
+    ax.plot([0, lim_max], [0, lim_max], "--", color=MCOLOR["gold"], linewidth=1.2, alpha=0.7, label="100% serap")
+
+    for i, (xi, yi, lbl) in enumerate(zip(x, y, labels)):
+        if i < 12:
+            ax.annotate(lbl[:12], (xi, yi), textcoords="offset points", xytext=(5, 4),
+                        fontsize=6, color=MCOLOR["muted"])
+
+    ax.set_xlabel("Pagu", color=MCOLOR["muted"], fontsize=8)
+    ax.set_ylabel("Realisasi", color=MCOLOR["muted"], fontsize=8)
+    ax.legend(framealpha=0, labelcolor=MCOLOR["muted"], fontsize=8)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda v, _: f"{v/1e12:.1f}T" if abs(v) >= 1e12 else f"{v/1e9:.0f}M"
+    ))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda v, _: f"{v/1e12:.1f}T" if abs(v) >= 1e12 else f"{v/1e9:.0f}M"
+    ))
+    ax.set_title("Scatter: Pagu vs Realisasi", color=MCOLOR["text"], fontsize=10, fontweight="bold", pad=10)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------
+# MAIN APP
+# ---------------------------------------------
+def main():
+    # -- HERO HEADER --
     st.markdown("""
-    <div style='text-align:center; padding: 20px 0 8px;'>
-        <div style='font-size:2rem;'>🏛️</div>
-        <div style='font-weight:800; font-size:1rem; color:#f1f5f9; letter-spacing:-0.02em;'>TKD Dashboard</div>
-        <div style='font-size:0.7rem; color:#475569; letter-spacing:0.08em; text-transform:uppercase; margin-top:4px;'>Transfer ke Daerah</div>
+    <div class="hero-header">
+      <div class="hero-badge">🏛️ &nbsp;DJPB · Kementerian Keuangan RI</div>
+      <div class="hero-title">Dashboard Transfer ke Daerah</div>
+      <div class="hero-subtitle">Monitoring Pagu, Realisasi, Penyerapan &amp; Proyeksi Anggaran · Real-time Analytics</div>
     </div>
-    <hr style='border-color:#1e293b; margin:12px 0;'>
     """, unsafe_allow_html=True)
 
-    uploaded = st.file_uploader(
-        "📂 Upload Data",
-        type=["xlsx", "xls", "csv"],
-        help="Upload file Excel (.xlsx/.xls) atau CSV"
-    )
+    # -- SIDEBAR --
+    with st.sidebar:
+        st.markdown("### 📂 Upload Data")
+        uploaded = st.file_uploader(
+            "Upload Excel (.xlsx/.xls) atau CSV",
+            type=["xlsx", "xls", "csv"],
+            help="Mendukung .xlsx, .xls, dan .csv dengan berbagai encoding & separator"
+        )
 
-    st.markdown("<hr style='border-color:#1e293b; margin:12px 0;'>", unsafe_allow_html=True)
+        st.markdown("---")
+        st.markdown("### ⚙️ Konfigurasi Kolom")
+        col_pagu_inp    = st.text_input("Nama kolom Pagu",       value="pagu",      key="c_pagu")
+        col_real_inp    = st.text_input("Nama kolom Realisasi",  value="realisasi", key="c_real")
+        col_wil_inp     = st.text_input("Nama kolom Wilayah",    value="wilayah",   key="c_wil")
+        col_tahun_inp   = st.text_input("Nama kolom Tahun",      value="tahun",     key="c_thn")
 
-    if uploaded:
-        st.markdown("**⚙️ Filter Data**")
-        # Populated dynamically after load
+        st.markdown("---")
+        st.markdown("### 🔮 Proyeksi")
+        forecast_horizon = st.multiselect(
+            "Horizon proyeksi",
+            options=[1, 3, 5, 10],
+            default=[1, 3, 5],
+            format_func=lambda x: f"+{x} Tahun"
+        )
 
-    st.markdown("""
-    <hr style='border-color:#1e293b; margin:12px 0;'>
-    <div style='font-size:0.68rem; color:#334155; text-align:center; padding:0 8px;'>
-        Built for DJPB · APBN 2025<br>
-        Otomatis mendeteksi kolom data
-    </div>
-    """, unsafe_allow_html=True)
+        st.markdown("---")
+        st.markdown(f"<div style='color:#475569;font-size:0.72rem;'>v3.0 · {datetime.now().strftime('%Y')}</div>", unsafe_allow_html=True)
 
-
-# ─────────────────────────────────────────────
-# HEADER
-# ─────────────────────────────────────────────
-
-st.markdown("""
-<div class="header-banner">
-    <div style="position:relative; z-index:1;">
-        <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:16px;">
-            <div>
-                <div class="header-title">Transfer ke <span>Daerah</span> Dashboard</div>
-                <div class="header-subtitle">Analisis Pagu DIPA & Realisasi Anggaran — Sumatera Utara</div>
-                <div class="header-badge">🟢 LIVE · Auto-Detect Columns · AI-Assisted Analysis</div>
-            </div>
-            <div style="text-align:right; color:#475569; font-size:0.75rem; line-height:1.8; font-family:'JetBrains Mono',monospace;">
-                <div>""" + datetime.now().strftime("%d %b %Y") + """</div>
-                <div style="color:#334155;">v3.0 · APBN 2025</div>
-            </div>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-
-# ─────────────────────────────────────────────
-# NO FILE STATE
-# ─────────────────────────────────────────────
-
-if not uploaded:
-    st.markdown("""
-    <div style="background:#111827; border:2px dashed #1e293b; border-radius:16px; padding:60px 40px; text-align:center; margin:20px 0;">
-        <div style="font-size:3rem; margin-bottom:16px;">📊</div>
-        <div style="font-size:1.2rem; font-weight:700; color:#f1f5f9; margin-bottom:8px;">Upload File Excel atau CSV</div>
-        <div style="color:#64748b; font-size:0.875rem; max-width:400px; margin:0 auto; line-height:1.7;">
-            Drag & drop atau klik tombol upload di sidebar kiri.<br>
-            Dashboard akan otomatis muncul dengan analisis lengkap.
-        </div>
-        <div style="margin-top:24px; display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
-            <div style="background:#1a2236; border:1px solid #1e293b; border-radius:8px; padding:10px 18px; font-size:0.78rem; color:#64748b;">✅ .xlsx / .xls</div>
-            <div style="background:#1a2236; border:1px solid #1e293b; border-radius:8px; padding:10px 18px; font-size:0.78rem; color:#64748b;">✅ .csv (auto-detect)</div>
-            <div style="background:#1a2236; border:1px solid #1e293b; border-radius:8px; padding:10px 18px; font-size:0.78rem; color:#64748b;">✅ Multi-sheet</div>
-            <div style="background:#1a2236; border:1px solid #1e293b; border-radius:8px; padding:10px 18px; font-size:0.78rem; color:#64748b;">✅ Download PDF/Excel</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.stop()
-
-
-# ─────────────────────────────────────────────
-# LOAD DATA
-# ─────────────────────────────────────────────
-
-with st.spinner("🔄 Memuat dan menganalisis data..."):
-    df_raw, err = load_file(uploaded)
-
-if err:
-    st.error(f"❌ {err}")
-    st.stop()
-
-df = df_raw.copy()
-df.columns = df.columns.str.strip()
-df = df.dropna(how="all")
-
-# Auto-detect columns
-mapping = detect_columns(df)
-
-# Coerce numeric
-num_cols = [mapping.get("pagu"), mapping.get("realisasi")]
-df = coerce_numeric(df, [c for c in num_cols if c])
-
-# ─────────────────────────────────────────────
-# SIDEBAR FILTERS (dynamic after load)
-# ─────────────────────────────────────────────
-
-with st.sidebar:
-    if mapping.get("region"):
-        all_regions = sorted(df[mapping["region"]].dropna().unique().tolist())
-        sel_regions = st.multiselect("🗺️ Wilayah", all_regions, default=[], 
-                                     placeholder="Semua wilayah")
-    else:
-        sel_regions = []
-
-    if mapping.get("bulan"):
-        all_months = sorted(df[mapping["bulan"]].dropna().unique().tolist())
-        sel_months = st.multiselect("📅 Bulan", all_months, default=[],
-                                    placeholder="Semua bulan")
-    else:
-        sel_months = []
-
-    if mapping.get("akun"):
-        all_akun = sorted(df[mapping["akun"]].dropna().unique().tolist())
-        sel_akun = st.multiselect("🏷️ Jenis Akun", all_akun, default=[],
-                                   placeholder="Semua akun")
-    else:
-        sel_akun = []
-
-    st.markdown("<hr style='border-color:#1e293b; margin:12px 0;'>", unsafe_allow_html=True)
-    st.markdown("**📥 Download Laporan**")
-
-# Apply filters
-dff = df.copy()
-if sel_regions and mapping.get("region"):
-    dff = dff[dff[mapping["region"]].isin(sel_regions)]
-if sel_months and mapping.get("bulan"):
-    dff = dff[dff[mapping["bulan"]].isin(sel_months)]
-if sel_akun and mapping.get("akun"):
-    dff = dff[dff[mapping["akun"]].isin(sel_akun)]
-
-
-# ─────────────────────────────────────────────
-# COMPUTE CORE METRICS
-# ─────────────────────────────────────────────
-
-pagu_col  = mapping.get("pagu")
-real_col  = mapping.get("realisasi")
-reg_col   = mapping.get("region")
-bln_col   = mapping.get("bulan")
-akun_col  = mapping.get("akun")
-
-total_pagu  = dff[pagu_col].sum()  if pagu_col  else 0
-total_real  = dff[real_col].sum()  if real_col  else 0
-total_sisa  = total_pagu - total_real
-pct_serap   = (total_real / total_pagu * 100) if total_pagu > 0 else 0
-
-n_wilayah   = dff[reg_col].nunique() if reg_col else 0
-n_rows      = len(dff)
-
-
-# ─────────────────────────────────────────────
-# KPI ROW
-# ─────────────────────────────────────────────
-
-st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Ringkasan Eksekutif</h2></div>""", unsafe_allow_html=True)
-
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-
-kpi_data_list = [
-    (k1, "blue",    "💰", "TOTAL PAGU",    fmt_triliun(total_pagu),   f"{n_rows:,} baris data"),
-    (k2, "emerald", "📈", "REALISASI",     fmt_triliun(total_real),   f"{fmt_pct(pct_serap)} terserap"),
-    (k3, "amber",   "📉", "SISA ANGGARAN", fmt_triliun(total_sisa),   "Belum tersalur"),
-    (k4, pct_color(pct_serap), "🎯", "PENYERAPAN",  fmt_pct(pct_serap),    "% dari Pagu DIPA"),
-    (k5, "violet",  "🗺️", "WILAYAH",       str(n_wilayah),            "Kab/Kota"),
-    (k6, "cyan",    "📋", "TOTAL DATA",    f"{n_rows:,}",             "Baris terfilter"),
-]
-
-for col, color, icon, label, value, sub in kpi_data_list:
-    with col:
-        st.markdown(f"""
-        <div class="kpi-card {color}">
-            <div class="kpi-icon">{icon}</div>
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value">{value}</div>
-            <div class="kpi-sub">{sub}</div>
+    # -- NO DATA STATE --
+    if not uploaded:
+        st.markdown("""
+        <div class="info-box">
+        📌 <b>Cara mulai:</b> Upload file Excel (.xlsx / .xls) atau CSV dari sidebar kiri untuk memulai analisis.
         </div>
         """, unsafe_allow_html=True)
 
-st.markdown("<br>", unsafe_allow_html=True)
-
-
-# ─────────────────────────────────────────────
-# MAIN TABS
-# ─────────────────────────────────────────────
-
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 Overview",
-    "📍 Peta Wilayah",
-    "📅 Trend Bulanan",
-    "🔮 Proyeksi",
-    "📋 Data & Unduh"
-])
-
-
-# ══════════════════════════════════════════════
-# TAB 1 — OVERVIEW
-# ══════════════════════════════════════════════
-
-with tab1:
-    # ── Pagu vs Realisasi per Wilayah ──
-    if reg_col and pagu_col and real_col:
-        st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Pagu vs Realisasi per Wilayah</h2></div>""", unsafe_allow_html=True)
-
-        reg_grp = (dff.groupby(reg_col)[[pagu_col, real_col]]
-                      .sum().reset_index()
-                      .sort_values(real_col, ascending=True))
-        reg_grp["Penyerapan (%)"] = (reg_grp[real_col] / reg_grp[pagu_col] * 100).round(1)
-        reg_grp["Sisa"] = reg_grp[pagu_col] - reg_grp[real_col]
-
-        # Limit to top/bottom for readability
-        show_all = st.checkbox("Tampilkan semua wilayah", value=False)
-        if not show_all and len(reg_grp) > 20:
-            top10  = reg_grp.nlargest(10, real_col)
-            bot10  = reg_grp.nsmallest(10, real_col)
-            reg_show = pd.concat([bot10, top10]).drop_duplicates().sort_values(real_col)
-            st.caption(f"Menampilkan 10 tertinggi & 10 terendah dari {len(reg_grp)} wilayah")
-        else:
-            reg_show = reg_grp
-
-        fig_bar = go.Figure()
-        fig_bar.add_trace(go.Bar(
-            y=reg_show[reg_col], x=reg_show[pagu_col],
-            name="Pagu DIPA",
-            orientation="h",
-            marker=dict(color="rgba(59,130,246,0.25)", line=dict(color="#3b82f6", width=1)),
-        ))
-        fig_bar.add_trace(go.Bar(
-            y=reg_show[reg_col], x=reg_show[real_col],
-            name="Realisasi",
-            orientation="h",
-            marker=dict(color="#10b981"),
-            text=[f"{p:.1f}%" for p in reg_show["Penyerapan (%)"]],
-            textposition="outside",
-            textfont=dict(size=10, color="#94a3b8"),
-        ))
-        fig_bar.update_layout(
-            **PLOTLY_LAYOUT,
-            barmode="overlay",
-            height=max(400, len(reg_show) * 28),
-            title=dict(text="Perbandingan Pagu & Realisasi per Wilayah", font=dict(size=13, color="#f1f5f9")),
-            showlegend=True,
-            xaxis_tickformat=".2s",
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-    # ── Penyerapan % Distribution ──
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        if reg_col and pagu_col and real_col:
-            st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Distribusi Penyerapan</h2></div>""", unsafe_allow_html=True)
-            bins = [0, 25, 50, 75, 90, 100, float("inf")]
-            labels = ["0-25%","25-50%","50-75%","75-90%","90-100%",">100%"]
-            reg_grp["Kategori"] = pd.cut(reg_grp["Penyerapan (%)"], bins=bins, labels=labels, right=False)
-            dist = reg_grp["Kategori"].value_counts().reset_index()
-            dist.columns = ["Kategori","Jumlah"]
-            pie_colors = ["#f43f5e","#f59e0b","#3b82f6","#06b6d4","#10b981","#8b5cf6"]
-            fig_pie = go.Figure(go.Pie(
-                labels=dist["Kategori"], values=dist["Jumlah"],
-                hole=0.55,
-                marker=dict(colors=pie_colors, line=dict(color="#0a0e1a", width=2)),
-                textfont=dict(size=11, color="#f1f5f9"),
-                textinfo="percent+label",
-            ))
-            fig_pie.update_layout(
-                **PLOTLY_LAYOUT,
-                height=300,
-                showlegend=False,
-                title=dict(text="% Wilayah per Kategori Penyerapan", font=dict(size=12, color="#f1f5f9")),
-                annotations=[dict(text=f"{pct_serap:.0f}%<br><span style='font-size:10px'>Rata-rata</span>",
-                                  x=0.5, y=0.5, font_size=18, showarrow=False,
-                                  font_color="#f1f5f9")]
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-    with col_b:
-        if akun_col and pagu_col and real_col:
-            st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Komposisi per Jenis Akun</h2></div>""", unsafe_allow_html=True)
-            akun_grp = (dff.groupby(akun_col)[[pagu_col, real_col]]
-                           .sum().reset_index()
-                           .sort_values(pagu_col, ascending=False)
-                           .head(8))
-            fig_akun = go.Figure()
-            fig_akun.add_trace(go.Bar(
-                x=akun_grp[akun_col], y=akun_grp[pagu_col],
-                name="Pagu", marker_color="#3b82f6"
-            ))
-            fig_akun.add_trace(go.Bar(
-                x=akun_grp[akun_col], y=akun_grp[real_col],
-                name="Realisasi", marker_color="#10b981"
-            ))
-            fig_akun.update_layout(
-                **PLOTLY_LAYOUT,
-                height=300,
-                barmode="group",
-                xaxis=dict(tickangle=-30),
-                yaxis_tickformat=".2s",
-                title=dict(text="Top 8 Jenis Akun", font=dict(size=12, color="#f1f5f9")),
-            )
-            st.plotly_chart(fig_akun, use_container_width=True)
-
-    # ── Top & Bottom Wilayah ──
-    if reg_col and real_col and pagu_col:
-        st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Peringkat Wilayah</h2></div>""", unsafe_allow_html=True)
-        col_top, col_bot = st.columns(2)
-        top5  = reg_grp.nlargest(5, "Penyerapan (%)")[
-                    [reg_col, pagu_col, real_col, "Penyerapan (%)"]].reset_index(drop=True)
-        bot5  = reg_grp.nsmallest(5, "Penyerapan (%)")[
-                    [reg_col, pagu_col, real_col, "Penyerapan (%)"]].reset_index(drop=True)
-
-        with col_top:
-            st.markdown("##### 🏆 Penyerapan Tertinggi")
-            for _, row in top5.iterrows():
-                pct = row["Penyerapan (%)"]
+        c1, c2, c3 = st.columns(3)
+        features = [
+            ("📊", "Multi-format Reader", "Excel (.xlsx/.xls) & CSV dengan auto-detect encoding & separator"),
+            ("📈", "Analisis Mendalam", "KPI, tren, perbandingan wilayah, scatter, treemap"),
+            ("🔮", "Proyeksi Cerdas", "Linear + CAGR ensemble, confidence interval, horizon 1/3/5/10 tahun"),
+            ("📄", "Export PDF & Excel", "Laporan eksekutif siap cetak dengan branding DJPB"),
+        ]
+        for i, (icon, title, desc) in enumerate(features):
+            col = [c1, c2, c3][i % 3]
+            with col:
                 st.markdown(f"""
-                <div class="insight-card success">
-                    <strong>{row[reg_col]}</strong><br>
-                    Realisasi: {fmt_triliun(row[real_col])} · Pagu: {fmt_triliun(row[pagu_col])}<br>
-                    Penyerapan: <strong style="color:#10b981;">{pct:.1f}%</strong>
+                <div class="kpi-card {'gold' if i==0 else 'blue' if i==1 else 'green' if i==2 else 'purple'}">
+                  <div style="font-size:1.8rem;margin-bottom:8px">{icon}</div>
+                  <div class="kpi-label">{title}</div>
+                  <div style="color:#94a3b8;font-size:0.82rem;margin-top:6px">{desc}</div>
                 </div>
                 """, unsafe_allow_html=True)
+        return
 
-        with col_bot:
-            st.markdown("##### ⚠️ Penyerapan Terendah")
-            for _, row in bot5.iterrows():
-                pct = row["Penyerapan (%)"]
-                st.markdown(f"""
-                <div class="insight-card danger">
-                    <strong>{row[reg_col]}</strong><br>
-                    Realisasi: {fmt_triliun(row[real_col])} · Pagu: {fmt_triliun(row[pagu_col])}<br>
-                    Penyerapan: <strong style="color:#f43f5e;">{pct:.1f}%</strong>
-                </div>
-                """, unsafe_allow_html=True)
+    # -- LOAD DATA --
+    with st.spinner("Membaca file..."):
+        df, err = load_file(uploaded)
 
-    # ── Auto Insights ──
-    st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>🤖 Analisis Otomatis</h2></div>""", unsafe_allow_html=True)
+    if err:
+        st.error(f"❌ {err}")
+        return
 
-    insights = []
-    if pagu_col and real_col:
-        if pct_serap >= 80:
-            insights.append(("success", f"✅ Penyerapan keseluruhan <strong>{pct_serap:.1f}%</strong> — tergolong BAIK. Target nasional umumnya ≥80%."))
-        elif pct_serap >= 50:
-            insights.append(("warning", f"⚠️ Penyerapan <strong>{pct_serap:.1f}%</strong> — masih di bawah target. Perlu akselerasi pencairan."))
-        else:
-            insights.append(("danger", f"🚨 Penyerapan hanya <strong>{pct_serap:.1f}%</strong> — kritis. Perlu evaluasi menyeluruh."))
+    if df is None or df.empty:
+        st.error("File kosong atau tidak ada data yang bisa dibaca.")
+        return
 
-        sisa_trilun = total_sisa / 1e12 if total_sisa >= 1e12 else total_sisa / 1e9
-        unit = "Triliun" if total_sisa >= 1e12 else "Miliar"
-        insights.append(("", f"📌 Anggaran belum tersalur: <strong>Rp {sisa_trilun:.2f} {unit}</strong> — perlu monitoring ketat."))
+    # -- AUTO-DETECT COLUMNS --
+    detected = detect_columns(df)
+    col_pagu  = col_pagu_inp  if col_pagu_inp  in df.columns else detected.get("pagu")
+    col_real  = col_real_inp  if col_real_inp  in df.columns else detected.get("real")
+    col_wil   = col_wil_inp   if col_wil_inp   in df.columns else detected.get("wilayah")
+    col_tahun = col_tahun_inp if col_tahun_inp in df.columns else detected.get("tahun")
 
-    if reg_col and pagu_col and real_col:
-        n_kritis = len(reg_grp[reg_grp["Penyerapan (%)"] < 50])
-        if n_kritis > 0:
-            kritis_list = ", ".join(reg_grp[reg_grp["Penyerapan (%)"] < 50][reg_col].head(3).tolist())
-            insights.append(("danger", f"🔴 <strong>{n_kritis} wilayah</strong> dengan penyerapan <50%: {kritis_list}..."))
+    has_pagu  = col_pagu  is not None
+    has_real  = col_real  is not None
+    has_wil   = col_wil   is not None
+    has_tahun = col_tahun is not None
 
-        top_wilayah = reg_grp.nlargest(1, real_col)[reg_col].values[0]
-        top_val     = reg_grp.nlargest(1, real_col)[real_col].values[0]
-        insights.append(("success", f"🏅 Wilayah dengan realisasi tertinggi: <strong>{top_wilayah}</strong> ({fmt_triliun(top_val)})"))
+    # Clean numerics
+    if has_pagu:  df[col_pagu]  = clean_numeric(df[col_pagu])
+    if has_real:  df[col_real]  = clean_numeric(df[col_real])
+    if has_tahun: df[col_tahun] = pd.to_numeric(df[col_tahun], errors="coerce")
 
-    for ctype, msg in insights:
-        st.markdown(f'<div class="insight-card {ctype}">{msg}</div>', unsafe_allow_html=True)
+    # -- SIDEBAR FILTERS --
+    with st.sidebar:
+        st.markdown("### 🔍 Filter Data")
+        df_f = df.copy()
 
+        if has_tahun:
+            tahun_opts = sorted(df_f[col_tahun].dropna().unique().astype(int).tolist())
+            tahun_sel = st.multiselect("Tahun", tahun_opts, default=tahun_opts, key="f_thn")
+            if tahun_sel:
+                df_f = df_f[df_f[col_tahun].isin(tahun_sel)]
 
-# ══════════════════════════════════════════════
-# TAB 2 — PETA WILAYAH
-# ══════════════════════════════════════════════
+        if has_wil:
+            wil_opts = sorted(df_f[col_wil].dropna().unique().tolist())
+            wil_sel = st.multiselect("Wilayah", wil_opts, key="f_wil")
+            if wil_sel:
+                df_f = df_f[df_f[col_wil].isin(wil_sel)]
 
-with tab2:
-    st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Analisis per Wilayah</h2></div>""", unsafe_allow_html=True)
+        search_q = st.text_input("🔍 Cari teks bebas", key="search")
+        if search_q:
+            mask = df_f.apply(lambda r: r.astype(str).str.contains(search_q, case=False, na=False).any(), axis=1)
+            df_f = df_f[mask]
 
-    if reg_col and pagu_col and real_col:
-        reg_full = (dff.groupby(reg_col)[[pagu_col, real_col]]
-                       .sum().reset_index())
-        reg_full["Penyerapan (%)"] = (reg_full[real_col] / reg_full[pagu_col] * 100).round(2)
-        reg_full["Sisa"] = reg_full[pagu_col] - reg_full[real_col]
-        reg_full = reg_full.sort_values("Penyerapan (%)", ascending=False)
+    # -- COMPUTE KPIs --
+    total_pagu = df_f[col_pagu].sum() if has_pagu else 0
+    total_real = df_f[col_real].sum() if has_real else 0
+    pct_real   = (total_real / total_pagu * 100) if (has_pagu and total_pagu > 0) else 0
+    n_rows     = len(df_f)
+    n_wilayah  = df_f[col_wil].nunique() if has_wil else "-"
 
-        # Treemap
-        fig_tree = px.treemap(
-            reg_full,
-            path=[reg_col],
-            values=pagu_col,
-            color="Penyerapan (%)",
-            color_continuous_scale=["#f43f5e","#f59e0b","#3b82f6","#10b981"],
-            color_continuous_midpoint=50,
-            title="Treemap Pagu per Wilayah (warna = % Penyerapan)",
-        )
-        fig_tree.update_layout(**PLOTLY_LAYOUT, height=450)
-        fig_tree.update_coloraxes(colorbar=dict(
-            title="Serap %", tickfont=dict(color="#94a3b8")
-        ))
-        st.plotly_chart(fig_tree, use_container_width=True)
+    cagr_pagu = calc_cagr(df_f.groupby(col_tahun)[col_pagu].sum().values) if (has_tahun and has_pagu) else np.nan
+    cagr_real = calc_cagr(df_f.groupby(col_tahun)[col_real].sum().values) if (has_tahun and has_real) else np.nan
 
-        # Scatter: Pagu vs Realisasi
-        col_x, col_y = st.columns(2)
-        with col_x:
-            fig_scatter = px.scatter(
-                reg_full,
-                x=pagu_col, y=real_col,
-                text=reg_col,
-                color="Penyerapan (%)",
-                color_continuous_scale=["#f43f5e","#f59e0b","#10b981"],
-                size=pagu_col,
-                title="Scatter: Pagu vs Realisasi per Wilayah",
-            )
-            # Diagonal reference line
-            max_val = max(reg_full[pagu_col].max(), reg_full[real_col].max())
-            fig_scatter.add_trace(go.Scatter(
-                x=[0, max_val], y=[0, max_val],
-                mode="lines",
-                line=dict(dash="dash", color="#475569", width=1),
-                name="Ideal (100%)",
-                showlegend=True
-            ))
-            fig_scatter.update_traces(textposition="top center", textfont=dict(size=9))
-            fig_scatter.update_layout(**PLOTLY_LAYOUT, height=400,
-                                      xaxis_tickformat=".2s", yaxis_tickformat=".2s")
-            st.plotly_chart(fig_scatter, use_container_width=True)
+    kpi = {"total_pagu": total_pagu, "total_real": total_real,
+           "pct_real": pct_real, "n_wilayah": n_wilayah, "n_rows": n_rows}
 
-        with col_y:
-            # Waterfall: top 10
-            top10_wf = reg_full.nlargest(10, "Penyerapan (%)")
-            fig_wf = go.Figure(go.Bar(
-                x=top10_wf["Penyerapan (%)"],
-                y=top10_wf[reg_col],
-                orientation="h",
-                marker=dict(
-                    color=top10_wf["Penyerapan (%)"],
-                    colorscale=[[0,"#f43f5e"],[0.5,"#f59e0b"],[1,"#10b981"]],
-                    cmin=0, cmax=100,
-                    showscale=False
-                ),
-                text=[f"{p:.1f}%" for p in top10_wf["Penyerapan (%)"]],
-                textposition="outside",
-                textfont=dict(size=11, color="#94a3b8"),
-            ))
-            fig_wf.add_vline(x=80, line_dash="dash", line_color="#475569", annotation_text="Target 80%",
-                              annotation_font_color="#64748b")
-            fig_wf.update_layout(**PLOTLY_LAYOUT, height=400,
-                                  title=dict(text="Top 10 Penyerapan (%)", font=dict(size=12, color="#f1f5f9")))
-            st.plotly_chart(fig_wf, use_container_width=True)
-
-        # Full table
-        st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Tabel Lengkap per Wilayah</h2></div>""", unsafe_allow_html=True)
-        display_df = reg_full.copy()
-        display_df[pagu_col]  = display_df[pagu_col].apply(fmt_triliun)
-        display_df[real_col]  = display_df[real_col].apply(fmt_triliun)
-        display_df["Sisa"]    = display_df["Sisa"].apply(fmt_triliun)
-        display_df["Penyerapan (%)"] = display_df["Penyerapan (%)"].apply(lambda x: f"{x:.1f}%")
-        st.dataframe(display_df, use_container_width=True, height=400)
-    else:
-        st.info("Kolom wilayah/pagu/realisasi tidak terdeteksi. Cek mapping kolom di tab Data.")
-
-
-# ══════════════════════════════════════════════
-# TAB 3 — TREND BULANAN
-# ══════════════════════════════════════════════
-
-with tab3:
-    st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Trend Realisasi Bulanan</h2></div>""", unsafe_allow_html=True)
-
-    if bln_col and real_col and pagu_col:
-        monthly = (dff.groupby(bln_col)[[pagu_col, real_col]]
-                      .sum().reset_index()
-                      .sort_values(bln_col))
-        monthly["Penyerapan (%)"] = (monthly[real_col] / monthly[pagu_col] * 100).round(2)
-        monthly["Kumulatif"] = monthly[real_col].cumsum()
-        monthly["Kumulatif Pagu"] = monthly[pagu_col].cumsum()
-
-        # Combined bar + line
-        fig_trend = make_subplots(specs=[[{"secondary_y": True}]])
-        fig_trend.add_trace(go.Bar(
-            x=monthly[bln_col], y=monthly[pagu_col],
-            name="Pagu", marker_color="rgba(59,130,246,0.2)",
-            marker_line=dict(color="#3b82f6", width=1)
-        ), secondary_y=False)
-        fig_trend.add_trace(go.Bar(
-            x=monthly[bln_col], y=monthly[real_col],
-            name="Realisasi", marker_color="#10b981"
-        ), secondary_y=False)
-        fig_trend.add_trace(go.Scatter(
-            x=monthly[bln_col], y=monthly["Penyerapan (%)"],
-            name="% Serap", mode="lines+markers",
-            line=dict(color="#f59e0b", width=2.5),
-            marker=dict(size=7, color="#f59e0b",
-                        line=dict(color="#0a0e1a", width=2))
-        ), secondary_y=True)
-        fig_trend.update_layout(
-            **PLOTLY_LAYOUT,
-            height=420,
-            barmode="group",
-            title=dict(text="Pagu & Realisasi Bulanan + % Penyerapan", font=dict(size=13, color="#f1f5f9")),
-            yaxis=dict(title="Nilai (Rp)", tickformat=".2s", gridcolor="#1e293b"),
-            yaxis2=dict(title="% Penyerapan", range=[0,120], ticksuffix="%",
-                        gridcolor="rgba(0,0,0,0)"),
-        )
-        st.plotly_chart(fig_trend, use_container_width=True)
-
-        # Kumulatif area
-        fig_cumul = go.Figure()
-        fig_cumul.add_trace(go.Scatter(
-            x=monthly[bln_col], y=monthly["Kumulatif Pagu"],
-            name="Kumulatif Pagu",
-            fill="tozeroy",
-            fillcolor="rgba(59,130,246,0.08)",
-            line=dict(color="#3b82f6", width=2, dash="dash"),
-        ))
-        fig_cumul.add_trace(go.Scatter(
-            x=monthly[bln_col], y=monthly["Kumulatif"],
-            name="Kumulatif Realisasi",
-            fill="tozeroy",
-            fillcolor="rgba(16,185,129,0.12)",
-            line=dict(color="#10b981", width=2.5),
-        ))
-        fig_cumul.update_layout(
-            **PLOTLY_LAYOUT,
-            height=350,
-            title=dict(text="Kumulatif Realisasi vs Pagu", font=dict(size=13, color="#f1f5f9")),
-            yaxis_tickformat=".2s",
-        )
-        st.plotly_chart(fig_cumul, use_container_width=True)
-
-        # Monthly table
-        st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Tabel Bulanan</h2></div>""", unsafe_allow_html=True)
-        m_display = monthly.copy()
-        m_display[pagu_col]  = m_display[pagu_col].apply(fmt_triliun)
-        m_display[real_col]  = m_display[real_col].apply(fmt_triliun)
-        m_display["Kumulatif"] = m_display["Kumulatif"].apply(fmt_triliun)
-        m_display["Penyerapan (%)"] = m_display["Penyerapan (%)"].apply(lambda x: f"{x:.1f}%")
-        st.dataframe(m_display, use_container_width=True)
-
-    elif real_col and pagu_col:
-        st.info("Kolom bulan tidak terdeteksi. Data aggregat ditampilkan.")
-        fig_single = go.Figure(go.Bar(
-            x=["Pagu DIPA", "Realisasi", "Sisa"],
-            y=[total_pagu, total_real, total_sisa],
-            marker_color=["#3b82f6","#10b981","#f43f5e"]
-        ))
-        fig_single.update_layout(**PLOTLY_LAYOUT, height=350,
-                                  yaxis_tickformat=".2s")
-        st.plotly_chart(fig_single, use_container_width=True)
-    else:
-        st.info("Kolom bulan/pagu/realisasi tidak terdeteksi.")
-
-
-# ══════════════════════════════════════════════
-# TAB 4 — PROYEKSI
-# ══════════════════════════════════════════════
-
-with tab4:
-    st.markdown("""
-    <div class='section-header'>
-        <div class='section-dot' style='background:#8b5cf6; box-shadow:0 0 8px rgba(139,92,246,0.6);'></div>
-        <h2>Proyeksi Anggaran Masa Depan</h2>
-        <span class='proj-badge'>🔮 AI Forecast</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Explanation
-    st.markdown("""
-    <div class="insight-card">
-        <strong>Metodologi Proyeksi:</strong> Dua model digunakan secara bersamaan:<br>
-        • <strong>Linear Regression</strong> — mengasumsikan pertumbuhan konstan<br>
-        • <strong>CAGR (Compound Annual Growth Rate)</strong> — mengasumsikan pertumbuhan eksponensial berbasis historis<br>
-        Proyeksi terbaik adalah rata-rata keduanya dengan confidence interval ±10%.
-    </div>
-    """, unsafe_allow_html=True)
-
-    col_cfg1, col_cfg2 = st.columns([2,1])
-    with col_cfg1:
-        horizon = st.selectbox(
-            "⏳ Horizon Proyeksi",
-            options=[1, 3, 5, 10],
-            format_func=lambda x: f"{x} Tahun ke Depan",
-            index=1
-        )
-    with col_cfg2:
-        base_year = st.number_input("📅 Tahun Dasar", min_value=2020, max_value=2030, value=2025)
-
-    # Build historical data
-    if bln_col and real_col and pagu_col:
-        monthly_hist = (dff.groupby(bln_col)[[pagu_col, real_col]].sum().reset_index()
-                           .sort_values(bln_col))
-        # Aggregate to annual (assume bulan = 1-12, simulate years)
-        # Use cumulative as proxy for annual
-        hist_pagu = monthly_hist[pagu_col].tolist()
-        hist_real = monthly_hist[real_col].tolist()
-        time_labels = [str(m) for m in monthly_hist[bln_col].tolist()]
-
-        # Year-based projection from monthly total
-        annual_pagu = [monthly_hist[pagu_col].sum()]
-        annual_real = [monthly_hist[real_col].sum()]
-        hist_years  = [str(base_year)]
-
-        # Add simulated prior years (declining 5-15% randomly for demo)
-        for i in range(1, 3):
-            yr = base_year - i
-            factor = 1 - (np.random.uniform(0.05, 0.15))
-            annual_pagu.insert(0, annual_pagu[0] * factor)
-            annual_real.insert(0, annual_real[0] * factor * np.random.uniform(0.85, 0.95))
-            hist_years.insert(0, str(yr))
-
-    elif real_col and pagu_col:
-        annual_pagu = [total_pagu]
-        annual_real = [total_real]
-        hist_years  = [str(base_year)]
-        for i in range(1, 3):
-            yr = base_year - i
-            factor = 1 - np.random.uniform(0.05, 0.15)
-            annual_pagu.insert(0, annual_pagu[0] * factor)
-            annual_real.insert(0, annual_real[0] * factor * np.random.uniform(0.85,0.95))
-            hist_years.insert(0, str(yr))
-    else:
-        st.warning("Data pagu/realisasi tidak tersedia untuk proyeksi.")
-        st.stop()
-
-    # Projection
-    proj_years = [str(base_year + i) for i in range(1, horizon + 1)]
-    all_years  = hist_years + proj_years
-
-    lin_pagu = linear_projection(annual_pagu, horizon)
-    lin_real = linear_projection(annual_real, horizon)
-    cgr_pagu = growth_projection(annual_pagu, horizon)
-    cgr_real = growth_projection(annual_real, horizon)
-
-    # Ensemble
-    ens_pagu = [(a + b) / 2 for a, b in zip(lin_pagu, cgr_pagu)]
-    ens_real = [(a + b) / 2 for a, b in zip(lin_real, cgr_real)]
-
-    # CI bands
-    ci_pagu_hi = [v * 1.10 for v in ens_pagu]
-    ci_pagu_lo = [v * 0.90 for v in ens_pagu]
-    ci_real_hi = [v * 1.10 for v in ens_real]
-    ci_real_lo = [v * 0.90 for v in ens_real]
-
-    # ── Chart ──
-    fig_proj = go.Figure()
-
-    # CI bands
-    fig_proj.add_trace(go.Scatter(
-        x=proj_years + proj_years[::-1],
-        y=ci_pagu_hi + ci_pagu_lo[::-1],
-        fill="toself", fillcolor="rgba(59,130,246,0.06)",
-        line=dict(color="rgba(0,0,0,0)"), showlegend=False, name="CI Pagu"
-    ))
-    fig_proj.add_trace(go.Scatter(
-        x=proj_years + proj_years[::-1],
-        y=ci_real_hi + ci_real_lo[::-1],
-        fill="toself", fillcolor="rgba(16,185,129,0.06)",
-        line=dict(color="rgba(0,0,0,0)"), showlegend=False, name="CI Realisasi"
-    ))
-
-    # Historical
-    fig_proj.add_trace(go.Scatter(
-        x=hist_years, y=annual_pagu,
-        name="Pagu Historis", mode="lines+markers",
-        line=dict(color="#3b82f6", width=2.5),
-        marker=dict(size=8, color="#3b82f6", line=dict(color="#0a0e1a", width=2))
-    ))
-    fig_proj.add_trace(go.Scatter(
-        x=hist_years, y=annual_real,
-        name="Realisasi Historis", mode="lines+markers",
-        line=dict(color="#10b981", width=2.5),
-        marker=dict(size=8, color="#10b981", line=dict(color="#0a0e1a", width=2))
-    ))
-
-    # Projections
-    conn_x_p = [hist_years[-1]] + proj_years
-    conn_y_p = [annual_pagu[-1]] + ens_pagu
-    conn_x_r = [hist_years[-1]] + proj_years
-    conn_y_r = [annual_real[-1]] + ens_real
-
-    fig_proj.add_trace(go.Scatter(
-        x=conn_x_p, y=conn_y_p,
-        name="Proyeksi Pagu", mode="lines+markers",
-        line=dict(color="#60a5fa", width=2, dash="dot"),
-        marker=dict(size=8, symbol="diamond", color="#60a5fa")
-    ))
-    fig_proj.add_trace(go.Scatter(
-        x=conn_x_r, y=conn_y_r,
-        name="Proyeksi Realisasi", mode="lines+markers",
-        line=dict(color="#34d399", width=2, dash="dot"),
-        marker=dict(size=8, symbol="diamond", color="#34d399")
-    ))
-
-    # Divider
-    fig_proj.add_vline(
-        x=hist_years[-1],
-        line_dash="dash", line_color="#475569",
-        annotation_text="▶ Proyeksi", annotation_font_color="#64748b",
-        annotation_position="top right"
-    )
-
-    fig_proj.update_layout(
-        **PLOTLY_LAYOUT,
-        height=480,
-        title=dict(text=f"Proyeksi Pagu & Realisasi — {horizon} Tahun ke Depan",
-                   font=dict(size=14, color="#f1f5f9")),
-        yaxis_tickformat=".2s",
-    )
-    st.plotly_chart(fig_proj, use_container_width=True)
-
-    # ── Projection Table ──
-    st.markdown("""<div class='section-header'><div class='section-dot' style='background:#8b5cf6;'></div><h2>Tabel Proyeksi Detail</h2></div>""", unsafe_allow_html=True)
-
-    proj_df = pd.DataFrame({
-        "Tahun": proj_years,
-        "Proyeksi Pagu": [fmt_triliun(v) for v in ens_pagu],
-        "Proyeksi Pagu (Min)": [fmt_triliun(v) for v in ci_pagu_lo],
-        "Proyeksi Pagu (Max)": [fmt_triliun(v) for v in ci_pagu_hi],
-        "Proyeksi Realisasi": [fmt_triliun(v) for v in ens_real],
-        "Proyeksi Realisasi (Min)": [fmt_triliun(v) for v in ci_real_lo],
-        "Proyeksi Realisasi (Max)": [fmt_triliun(v) for v in ci_real_hi],
-        "Est. % Serap": [f"{r/p*100:.1f}%" for r, p in zip(ens_real, ens_pagu)],
-    })
-    st.dataframe(proj_df, use_container_width=True, hide_index=True)
-
-    # CAGR info
-    if len(annual_pagu) > 1 and annual_pagu[0] > 0:
-        cagr_p = ((annual_pagu[-1] / annual_pagu[0]) ** (1/(len(annual_pagu)-1)) - 1) * 100
-        cagr_r = ((annual_real[-1] / annual_real[0]) ** (1/(len(annual_real)-1)) - 1) * 100
-        col_cagr1, col_cagr2, col_cagr3 = st.columns(3)
-        with col_cagr1:
-            st.markdown(f"""<div class='kpi-card blue'><div class='kpi-label'>CAGR PAGU</div><div class='kpi-value'>{cagr_p:.1f}%</div><div class='kpi-sub'>Per tahun historis</div></div>""", unsafe_allow_html=True)
-        with col_cagr2:
-            st.markdown(f"""<div class='kpi-card emerald'><div class='kpi-label'>CAGR REALISASI</div><div class='kpi-value'>{cagr_r:.1f}%</div><div class='kpi-sub'>Per tahun historis</div></div>""", unsafe_allow_html=True)
-        with col_cagr3:
-            proj_end = fmt_triliun(ens_real[-1])
-            st.markdown(f"""<div class='kpi-card violet'><div class='kpi-label'>TARGET {proj_years[-1]}</div><div class='kpi-value'>{proj_end}</div><div class='kpi-sub'>Proyeksi realisasi</div></div>""", unsafe_allow_html=True)
-
-    st.markdown("""
-    <div class="insight-card warning" style="margin-top:16px;">
-        ⚠️ <strong>Disclaimer:</strong> Proyeksi ini bersifat indikatif berdasarkan pola historis data yang diupload. 
-        Angka aktual dapat berbeda tergantung kebijakan fiskal, kondisi ekonomi, dan faktor struktural daerah.
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# ══════════════════════════════════════════════
-# TAB 5 — DATA & DOWNLOAD
-# ══════════════════════════════════════════════
-
-with tab5:
-    st.markdown("""<div class='section-header'><div class='section-dot'></div><h2>Data Lengkap & Unduh Laporan</h2></div>""", unsafe_allow_html=True)
-
-    # Column detection report
-    with st.expander("🔍 Deteksi Kolom Otomatis", expanded=False):
-        st.json({k: (v if v else "❌ Tidak terdeteksi") for k, v in mapping.items()})
-        st.caption(f"Total {len(df.columns)} kolom ditemukan: {list(df.columns)}")
-
-    # Download buttons
-    st.markdown("### 📥 Unduh Laporan")
-    dl_col1, dl_col2, dl_col3 = st.columns(3)
-
-    # Excel download — filtered data
-    with dl_col1:
-        excel_bytes = to_excel_bytes(dff)
-        st.download_button(
-            label="📊 Download Excel (Data Terfilter)",
-            data=excel_bytes,
-            file_name=f"TKD_Dashboard_Data_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
-    # Excel download — summary per region
-    with dl_col2:
-        if reg_col and pagu_col and real_col:
-            summary_reg = (dff.groupby(reg_col)[[pagu_col, real_col]].sum().reset_index())
-            summary_reg["Penyerapan (%)"] = (summary_reg[real_col] / summary_reg[pagu_col] * 100).round(2)
-            summary_reg["Sisa"] = summary_reg[pagu_col] - summary_reg[real_col]
-            excel_sum = to_excel_bytes(summary_reg)
-            st.download_button(
-                label="📋 Download Rekapitulasi Wilayah",
-                data=excel_sum,
-                file_name=f"TKD_Rekapitulasi_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-        else:
-            st.button("📋 Rekapitulasi (N/A)", disabled=True, use_container_width=True)
-
-    # PDF download
-    with dl_col3:
-        summary_dict = {
-            "Total Pagu DIPA": fmt_triliun(total_pagu),
-            "Total Realisasi": fmt_triliun(total_real),
-            "Sisa Anggaran": fmt_triliun(total_sisa),
-            "Persentase Penyerapan": fmt_pct(pct_serap),
-            "Jumlah Wilayah": str(n_wilayah),
-            "Total Baris Data": f"{n_rows:,}",
-            "Tanggal Laporan": datetime.now().strftime("%d %B %Y"),
-            "File Sumber": uploaded.name,
-        }
-        region_display = None
-        if reg_col and pagu_col and real_col:
-            region_display = (dff.groupby(reg_col)[[pagu_col, real_col]].sum().reset_index())
-            region_display["Serap (%)"] = (region_display[real_col] / region_display[pagu_col] * 100).round(1)
-            region_display[pagu_col] = region_display[pagu_col].apply(lambda x: f"{x/1e9:.1f}M")
-            region_display[real_col] = region_display[real_col].apply(lambda x: f"{x/1e9:.1f}M")
-
-        pdf_result = to_pdf_bytes(
-            summary_dict,
-            region_display,
-            title="TKD Dashboard — Laporan Realisasi Anggaran"
-        )
-        if isinstance(pdf_result, bytes):
-            st.download_button(
-                label="📄 Download PDF Report",
-                data=pdf_result,
-                file_name=f"TKD_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
-        else:
-            st.warning("PDF tidak tersedia — install reportlab: `pip install reportlab`")
-            st.caption(str(pdf_result))
+    # -- KPI CARDS --
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        badge = "badge-flat" if pct_real == 0 else ("badge-up" if pct_real >= 90 else "badge-down")
+        trend = "▲" if pct_real >= 90 else "▼"
+        st.markdown(f"""
+        <div class="kpi-card gold">
+          <div class="kpi-label">Total Pagu</div>
+          <div class="kpi-value">{fmt_rp(total_pagu)}</div>
+          <div class="kpi-sub">Alokasi Anggaran</div>
+          <span class="kpi-badge badge-flat">{n_rows:,} record</span>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="kpi-card green">
+          <div class="kpi-label">Total Realisasi</div>
+          <div class="kpi-value">{fmt_rp(total_real)}</div>
+          <div class="kpi-sub">Pencairan Dana</div>
+          <span class="kpi-badge {badge}">{trend} {fmt_pct(pct_real)} diserap</span>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        cagr_color = "badge-up" if (not np.isnan(cagr_pagu) and cagr_pagu > 0) else "badge-down"
+        st.markdown(f"""
+        <div class="kpi-card blue">
+          <div class="kpi-label">CAGR Pagu</div>
+          <div class="kpi-value">{fmt_pct(cagr_pagu) if not np.isnan(cagr_pagu) else '--'}</div>
+          <div class="kpi-sub">Pertumbuhan Historis</div>
+          <span class="kpi-badge {cagr_color}">per tahun</span>
+        </div>
+        """, unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"""
+        <div class="kpi-card purple">
+          <div class="kpi-label">Jumlah Wilayah</div>
+          <div class="kpi-value">{n_wilayah}</div>
+          <div class="kpi-sub">Cakupan Daerah</div>
+          <span class="kpi-badge badge-flat">aktif</span>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Raw data viewer
-    st.markdown("### 🔎 Tabel Data (Terfilter)")
-    search_term = st.text_input("🔍 Cari dalam data...", placeholder="Ketik untuk filter tabel")
-    if search_term:
-        mask = dff.astype(str).apply(lambda col: col.str.contains(search_term, case=False, na=False)).any(axis=1)
-        display_data = dff[mask]
-        st.caption(f"Ditemukan {len(display_data):,} baris yang cocok")
-    else:
-        display_data = dff
+    # -- TABS --
+    tab_overview, tab_wilayah, tab_trend, tab_forecast, tab_data, tab_export = st.tabs([
+        "📊 Overview", "🗺️ Wilayah", "📈 Tren", "🔮 Proyeksi", "📋 Data", "⬇️ Export"
+    ])
 
-    st.dataframe(display_data, use_container_width=True, height=500)
-    st.caption(f"Menampilkan {len(display_data):,} dari {len(df):,} baris total")
+    # -- OVERVIEW TAB --
+    with tab_overview:
+        st.markdown('<div class="section-header"><div class="section-icon">📊</div><div class="section-title">Ringkasan Distribusi Anggaran</div></div>', unsafe_allow_html=True)
 
-    # Data quality report
-    st.markdown("### 🩺 Kualitas Data")
-    q_col1, q_col2, q_col3 = st.columns(3)
-    with q_col1:
-        null_pct = (df.isnull().sum().sum() / (len(df) * len(df.columns)) * 100)
-        st.markdown(f"""<div class='kpi-card {"emerald" if null_pct < 5 else "amber" if null_pct < 15 else "rose"}'><div class='kpi-label'>MISSING VALUES</div><div class='kpi-value'>{null_pct:.1f}%</div><div class='kpi-sub'>dari total sel</div></div>""", unsafe_allow_html=True)
-    with q_col2:
-        dup_count = df.duplicated().sum()
-        st.markdown(f"""<div class='kpi-card {"emerald" if dup_count == 0 else "amber"}'><div class='kpi-label'>DUPLIKAT</div><div class='kpi-value'>{dup_count:,}</div><div class='kpi-sub'>baris duplikat</div></div>""", unsafe_allow_html=True)
-    with q_col3:
-        st.markdown(f"""<div class='kpi-card blue'><div class='kpi-label'>TOTAL KOLOM</div><div class='kpi-value'>{len(df.columns)}</div><div class='kpi-sub'>kolom terdeteksi</div></div>""", unsafe_allow_html=True)
+        if has_pagu and has_real and has_wil:
+            df_agg = df_f.groupby(col_wil, as_index=False).agg(
+                pagu=(col_pagu, "sum"),
+                real=(col_real, "sum")
+            ).rename(columns={"pagu": col_pagu, "real": col_real})
 
-# ─────────────────────────────────────────────
-# FOOTER
-# ─────────────────────────────────────────────
+            col_l, col_r = st.columns([3, 2])
+            with col_l:
+                fig = chart_bar_pagu_real(df_agg, col_pagu, col_real, col_wil)
+                st.pyplot(fig, use_container_width=True)
+                plt.close(fig)
+            with col_r:
+                fig2 = chart_pct_bar(df_agg, col_real, col_pagu, col_wil)
+                st.pyplot(fig2, use_container_width=True)
+                plt.close(fig2)
 
-st.markdown(f"""
-<div class="dashboard-footer">
-    🏛️ TKD DASHBOARD · TRANSFER KE DAERAH · DIREKTORAT JENDERAL PERIMBANGAN KEUANGAN<br>
-    Dibangun dengan Streamlit · Python · Plotly · Data diperbarui: {datetime.now().strftime("%d %B %Y %H:%M")} WIB
-</div>
-""", unsafe_allow_html=True)
+            st.markdown('<div class="section-header"><div class="section-icon">🔵</div><div class="section-title">Scatter: Pagu vs Realisasi</div></div>', unsafe_allow_html=True)
+            col_sc, col_info = st.columns([2, 1])
+            with col_sc:
+                fig3 = chart_scatter(df_agg, col_pagu, col_real, col_wil)
+                st.pyplot(fig3, use_container_width=True)
+                plt.close(fig3)
+            with col_info:
+                st.markdown("""
+                <div class="info-box">
+                <b>Cara baca grafik:</b><br>
+                Titik di <b>atas garis diagonal</b> = realisasi melebihi pagu (perlu verifikasi).<br><br>
+                Titik di <b>bawah garis</b> = masih ada sisa pagu yang belum dicairkan.
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Top 5 penyerapan
+                df_agg["pct"] = (df_agg[col_real] / df_agg[col_pagu] * 100).clip(0, 200)
+                top5 = df_agg.nlargest(5, "pct")[[col_wil, "pct"]].reset_index(drop=True)
+                top5.columns = ["Wilayah", "% Serap"]
+                top5["% Serap"] = top5["% Serap"].map("{:.1f}%".format)
+                st.dataframe(top5, hide_index=True, use_container_width=True)
+        else:
+            st.markdown("""
+            <div class="warn-box">
+            ⚠️ Kolom <b>pagu</b>, <b>realisasi</b>, atau <b>wilayah</b> tidak terdeteksi otomatis.<br>
+            Masukkan nama kolom yang benar di sidebar kiri → Konfigurasi Kolom.
+            </div>
+            """, unsafe_allow_html=True)
+            st.dataframe(df_f.head(20), use_container_width=True)
+
+    # -- WILAYAH TAB --
+    with tab_wilayah:
+        st.markdown('<div class="section-header"><div class="section-icon">🗺️</div><div class="section-title">Analisis per Wilayah</div></div>', unsafe_allow_html=True)
+
+        if has_pagu and has_wil:
+            df_agg_w = df_f.groupby(col_wil, as_index=False).agg(
+                pagu_sum=(col_pagu, "sum"),
+                **({f"real_sum": (col_real, "sum")} if has_real else {})
+            )
+
+            if has_real:
+                df_agg_w["pct_serap"] = (df_agg_w["real_sum"] / df_agg_w["pagu_sum"] * 100).clip(0, 200)
+                df_agg_w = df_agg_w.sort_values("pagu_sum", ascending=False)
+                df_display = df_agg_w.rename(columns={
+                    col_wil: "Wilayah",
+                    "pagu_sum": "Pagu",
+                    "real_sum": "Realisasi",
+                    "pct_serap": "% Serap"
+                })
+                df_display["Pagu"]       = df_display["Pagu"].map(fmt_rp)
+                df_display["Realisasi"]  = df_display["Realisasi"].map(fmt_rp)
+                df_display["% Serap"]    = df_display["% Serap"].map("{:.1f}%".format)
+            else:
+                df_agg_w = df_agg_w.sort_values("pagu_sum", ascending=False)
+                df_display = df_agg_w.rename(columns={col_wil: "Wilayah", "pagu_sum": "Pagu"})
+                df_display["Pagu"] = df_display["Pagu"].map(fmt_rp)
+
+            search_w = st.text_input("🔍 Cari wilayah", key="s_wil")
+            if search_w:
+                df_display = df_display[df_display["Wilayah"].str.contains(search_w, case=False, na=False)]
+
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            st.caption(f"Menampilkan {len(df_display)} wilayah")
+        else:
+            st.info("Kolom wilayah/pagu belum dikonfigurasi.")
+
+    # -- TREN TAB --
+    with tab_trend:
+        st.markdown('<div class="section-header"><div class="section-icon">📈</div><div class="section-title">Tren Historis per Tahun</div></div>', unsafe_allow_html=True)
+
+        if has_tahun and has_pagu:
+            df_yr = df_f.groupby(col_tahun).agg(
+                pagu_sum=(col_pagu, "sum"),
+                **({f"real_sum": (col_real, "sum")} if has_real else {})
+            ).reset_index().sort_values(col_tahun)
+
+            years     = df_yr[col_tahun].values
+            pagu_vals = df_yr["pagu_sum"].values
+            real_vals = df_yr["real_sum"].values if has_real else np.zeros(len(years))
+
+            fig = chart_trend(years, pagu_vals, real_vals)
+            st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+
+            # Summary table
+            df_yr_disp = df_yr.copy()
+            df_yr_disp[col_tahun] = df_yr_disp[col_tahun].astype(int)
+            df_yr_disp["pagu_sum"] = df_yr_disp["pagu_sum"].map(fmt_rp)
+            if has_real:
+                df_yr_disp["real_sum"] = df_yr_disp["real_sum"].map(fmt_rp)
+                df_yr_disp["% Serap"]  = (df_yr["real_sum"] / df_yr["pagu_sum"] * 100).map("{:.1f}%".format)
+            df_yr_disp.rename(columns={
+                col_tahun: "Tahun",
+                "pagu_sum": "Total Pagu",
+                "real_sum": "Total Realisasi"
+            }, inplace=True)
+            st.dataframe(df_yr_disp, use_container_width=True, hide_index=True)
+        else:
+            st.info("Kolom tahun/pagu belum dikonfigurasi. Setel di sidebar → Konfigurasi Kolom.")
+
+    # -- FORECAST TAB --
+    with tab_forecast:
+        st.markdown('<div class="section-header"><div class="section-icon">🔮</div><div class="section-title">Proyeksi Anggaran ke Depan</div></div>', unsafe_allow_html=True)
+
+        if not forecast_horizon:
+            st.info("Pilih horizon proyeksi di sidebar.")
+        elif not (has_tahun and has_pagu):
+            st.warning("Proyeksi membutuhkan kolom **tahun** dan **pagu**. Konfigurasi di sidebar.")
+        else:
+            df_yr = df_f.groupby(col_tahun).agg(
+                pagu_sum=(col_pagu, "sum"),
+                **({f"real_sum": (col_real, "sum")} if has_real else {})
+            ).reset_index().sort_values(col_tahun)
+
+            years     = df_yr[col_tahun].values
+            pagu_vals = df_yr["pagu_sum"].values
+            real_vals = df_yr["real_sum"].values if has_real else None
+
+            fore_pagu = forecast_series(pagu_vals, forecast_horizon)
+            fore_real = forecast_series(real_vals, forecast_horizon) if real_vals is not None else None
+
+            col_fp, col_fr = st.columns(2)
+            with col_fp:
+                st.pyplot(chart_forecast(years, pagu_vals, fore_pagu, "Pagu", MCOLOR["blue"]),
+                          use_container_width=True)
+                plt.close()
+            with col_fr:
+                if fore_real:
+                    st.pyplot(chart_forecast(years, real_vals, fore_real, "Realisasi", MCOLOR["green"]),
+                              use_container_width=True)
+                    plt.close()
+
+            # -- Forecast table --
+            st.markdown("#### 📋 Tabel Proyeksi Detail")
+            last_year = int(years[-1])
+            rows = []
+            for h in sorted(forecast_horizon):
+                target_year = last_year + h
+                fp = fore_pagu[h]
+                row = {
+                    "Horizon":    f"+{h} Tahun",
+                    "Tahun":      target_year,
+                    "Pagu Min":   fmt_rp(fp["min"]),
+                    "Pagu Tengah":fmt_rp(fp["mid"]),
+                    "Pagu Max":   fmt_rp(fp["max"]),
+                }
+                if fore_real:
+                    fr = fore_real[h]
+                    row["Real. Min"]   = fmt_rp(fr["min"])
+                    row["Real. Tengah"]= fmt_rp(fr["mid"])
+                    row["Real. Max"]   = fmt_rp(fr["max"])
+                    row["Est. % Serap"]= fmt_pct(fr["mid"] / fp["mid"] * 100) if fp["mid"] > 0 else "-"
+                rows.append(row)
+
+            forecast_df = pd.DataFrame(rows)
+            st.dataframe(forecast_df, use_container_width=True, hide_index=True)
+
+            # -- CAGR summary --
+            st.markdown("#### 📐 CAGR Historis")
+            c_cagr1, c_cagr2, c_cagr3 = st.columns(3)
+            with c_cagr1:
+                st.metric("CAGR Pagu", fmt_pct(cagr_pagu) if not np.isnan(cagr_pagu) else "--")
+            with c_cagr2:
+                if not np.isnan(cagr_real):
+                    st.metric("CAGR Realisasi", fmt_pct(cagr_real))
+            with c_cagr3:
+                n_yr = len(years)
+                st.metric("Data Historis", f"{n_yr} Tahun", f"{int(years[0])}-{int(years[-1])}" if n_yr > 0 else "")
+
+            # Store for export
+            st.session_state["forecast_df"] = forecast_df
+
+    # -- DATA TAB --
+    with tab_data:
+        st.markdown('<div class="section-header"><div class="section-icon">📋</div><div class="section-title">Data Mentah</div></div>', unsafe_allow_html=True)
+
+        # Data quality
+        n_missing = df_f.isnull().sum().sum()
+        n_dup     = df_f.duplicated().sum()
+        c_dq1, c_dq2, c_dq3, c_dq4 = st.columns(4)
+        c_dq1.metric("Total Baris",   f"{len(df_f):,}")
+        c_dq2.metric("Total Kolom",   f"{len(df_f.columns)}")
+        c_dq3.metric("Missing Values",f"{n_missing:,}", delta="masalah" if n_missing > 0 else None,
+                     delta_color="inverse" if n_missing > 0 else "normal")
+        c_dq4.metric("Duplikat",      f"{n_dup:,}", delta="masalah" if n_dup > 0 else None,
+                     delta_color="inverse" if n_dup > 0 else "normal")
+
+        st.dataframe(df_f, use_container_width=True, hide_index=True)
+
+    # -- EXPORT TAB --
+    with tab_export:
+        st.markdown('<div class="section-header"><div class="section-icon">⬇️</div><div class="section-title">Export & Download</div></div>', unsafe_allow_html=True)
+
+        forecast_df_export = st.session_state.get("forecast_df", pd.DataFrame())
+        filters_active = {}
+        if has_tahun and "f_thn" in st.session_state and st.session_state["f_thn"]:
+            filters_active["Tahun"] = ", ".join(str(x) for x in st.session_state["f_thn"])
+        if has_wil and "f_wil" in st.session_state and st.session_state["f_wil"]:
+            filters_active["Wilayah"] = f"{len(st.session_state['f_wil'])} dipilih"
+
+        col_e1, col_e2, col_e3 = st.columns(3)
+
+        with col_e1:
+            st.markdown("**📄 Laporan PDF**")
+            pdf_bytes = generate_pdf(df_f, kpi, {}, filters_active)
+            if pdf_bytes:
+                st.download_button(
+                    "⬇️ Download PDF",
+                    data=pdf_bytes,
+                    file_name=f"laporan_tkd_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            else:
+                st.markdown('<div class="warn-box">reportlab belum terinstall. Tambahkan <code>reportlab</code> ke requirements.txt</div>', unsafe_allow_html=True)
+
+        with col_e2:
+            st.markdown("**📊 Excel -- Data Terfilter**")
+            excel_data = generate_excel(df_f, kpi, forecast_df_export if not forecast_df_export.empty else None)
+            st.download_button(
+                "⬇️ Download Excel",
+                data=excel_data,
+                file_name=f"data_tkd_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        with col_e3:
+            st.markdown("**📑 CSV -- Data Terfilter**")
+            csv_data = df_f.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "⬇️ Download CSV",
+                data=csv_data,
+                file_name=f"data_tkd_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+        st.markdown("---")
+        st.markdown("**📌 Info Ringkasan**")
+        c_inf1, c_inf2 = st.columns(2)
+        with c_inf1:
+            st.markdown(f"""
+            <div class="info-box">
+            <b>Data aktif:</b> {len(df_f):,} baris · {len(df_f.columns)} kolom<br>
+            <b>Total Pagu:</b> {fmt_rp(total_pagu)}<br>
+            <b>Total Realisasi:</b> {fmt_rp(total_real)}<br>
+            <b>% Penyerapan:</b> {fmt_pct(pct_real)}
+            </div>
+            """, unsafe_allow_html=True)
+        with c_inf2:
+            if filters_active:
+                ftext = "<br>".join([f"<b>{k}:</b> {v}" for k, v in filters_active.items()])
+                st.markdown(f'<div class="info-box"><b>Filter Aktif:</b><br>{ftext}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="info-box">Tidak ada filter aktif -- semua data ditampilkan.</div>', unsafe_allow_html=True)
+
+
+if __name__ == "__main__":
+    main()
